@@ -87,6 +87,7 @@ const RefreshCw = Ic('<polyline points="23 4 23 10 17 10"/><polyline points="1 2
 const Link2 = Ic('<path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/>');
 const Settings = Ic('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>');
 const ExternalLink = Ic('<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>');
+const Lock = Ic('<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>');
 
 // ============================================================================
 //  CONFIG
@@ -125,7 +126,7 @@ const OAUTH_SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly';
 const DEFAULT_DRIVE = {
   clientId: '',
   spreadsheetUrl: '',
-  tabs: { accounts: '마스터_계좌', transactions: '마스터_계좌입출금실적', plans: '마스터_자금계획' },
+  tabs: { accounts: '마스터_계좌', transactions: '마스터_계좌입출금실적', plans: '마스터_자금계획', settings: '설정' },
 };
 const MONTH_ABBR_TO_NUM = {
   Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06',
@@ -194,6 +195,46 @@ function arrayToRowsWithHeaders(values) {
     return obj;
   }).filter(obj => Object.values(obj).some(v => v !== ''));
   return { headers: cleanHeaders, rows };
+}
+
+// 팀 설정 파싱: 2D 배열 [키, 값] 형태에서 { 키: 값 } 객체로 변환
+// 헤더 첫 행은 건너뛰고, 키/값 대소문자 구분 없이 매칭
+function parseTeamSettings(values) {
+  const result = { closingMonth: '', closedBy: '', closedAt: '', note: '' };
+  if (!values || values.length < 2) return result;
+
+  // 키 → 결과 필드 매핑 (여러 표현 허용)
+  const keyMap = {
+    '마감월': 'closingMonth',
+    '실적마감월': 'closingMonth',
+    '실적 마감월': 'closingMonth',
+    'closing_month': 'closingMonth',
+    '마감자': 'closedBy',
+    '담당자': 'closedBy',
+    'closed_by': 'closedBy',
+    '마감일': 'closedAt',
+    '마감일시': 'closedAt',
+    '확정일': 'closedAt',
+    'closed_at': 'closedAt',
+    '비고': 'note',
+    '메모': 'note',
+    'note': 'note',
+  };
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] || [];
+    const key = String(row[0] ?? '').trim();
+    const val = String(row[1] ?? '').trim();
+    if (!key) continue;
+    const field = keyMap[key] || keyMap[key.toLowerCase()];
+    if (field) result[field] = val;
+  }
+
+  // 마감월 정규화: "2026-03", "Mar-26", "2026년 3월", "2026.3" 등 → "2026-03"
+  if (result.closingMonth) {
+    result.closingMonth = normalizeMonthKey(result.closingMonth);
+  }
+  return result;
 }
 
 // ============================================================================
@@ -1183,7 +1224,7 @@ function MonthlyBalanceChart({ series, negativeMonth, accentColor, titleLabel })
 // ============================================================================
 //  DASHBOARD
 // ============================================================================
-function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFilter, setPlanYearFilter, actualizedMonths, setActualizedMonths }) {
+function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFilter, setPlanYearFilter, actualizedMonths, setActualizedMonths, teamSettings }) {
   const { pureFunds, availableFunds, financialFunds, availableForRunway, fundTypeList,
           pureFundsOpening,
           rdFunds, creditBalanceSum,
@@ -1223,6 +1264,74 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
 
   return (
     <div className="space-y-6">
+      {/* 팀 마감월 배너 (시트 "설정" 탭에서 동기화됨) */}
+      {teamSettings && teamSettings.closingMonth && (() => {
+        const closing = teamSettings.closingMonth; // "2026-03" 형식
+        // 마감월까지 전부 체크되어 있는지 확인
+        const myLatest = actualizedMonths.size > 0 ? [...actualizedMonths].sort().pop() : '';
+        const isMatched = myLatest === closing;
+        const isBehind = !myLatest || myLatest < closing;
+        const isAhead = myLatest > closing;
+
+        // 마감월을 "2026년 3월" 형식으로 표시
+        const prettyMonth = (() => {
+          const m = closing.match(/^(\d{4})-(\d{2})$/);
+          if (m) return `${m[1]}년 ${parseInt(m[2])}월`;
+          return closing;
+        })();
+        const myPretty = (() => {
+          const m = (myLatest || '').match(/^(\d{4})-(\d{2})$/);
+          if (m) return `${m[1]}년 ${parseInt(m[2])}월`;
+          return myLatest || '없음';
+        })();
+
+        const statusColor = isMatched ? COLOR.success : (isBehind ? COLOR.danger : COLOR.gold);
+        const statusBg = isMatched ? `${COLOR.success}12` : (isBehind ? `${COLOR.danger}12` : `${COLOR.gold}12`);
+        const statusBorder = isMatched ? `${COLOR.success}50` : (isBehind ? `${COLOR.danger}55` : `${COLOR.gold}55`);
+
+        return (
+          <div className="rounded-xl p-4 flex items-center justify-between flex-wrap gap-3"
+               style={{ background: statusBg, border: `1px solid ${statusBorder}` }}>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="rounded-lg p-2 flex items-center justify-center"
+                   style={{ background: `${statusColor}22`, color: statusColor }}>
+                <Lock size={16} />
+              </div>
+              <div>
+                <div className="text-sm font-semibold" style={{ color: COLOR.text }}>
+                  실적 마감: {prettyMonth}까지 확정
+                </div>
+                <div className="text-[11px] mt-0.5" style={{ color: COLOR.textDim }}>
+                  {teamSettings.closedBy && `담당: ${teamSettings.closedBy}`}
+                  {teamSettings.closedAt && `${teamSettings.closedBy ? ' · ' : ''}확정일: ${teamSettings.closedAt}`}
+                  {teamSettings.note && ` · ${teamSettings.note}`}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {isMatched && (
+                <div className="text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"
+                     style={{ color: COLOR.success, background: `${COLOR.success}18` }}>
+                  <CheckCircle2 size={13} /> 내 체크 설정 일치
+                </div>
+              )}
+              {isBehind && (
+                <div className="text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"
+                     style={{ color: COLOR.danger, background: `${COLOR.danger}18` }}>
+                  <AlertCircle size={13} /> 내 체크: {myPretty} · 마감 기준으로 업데이트 필요
+                </div>
+              )}
+              {isAhead && (
+                <div className="text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"
+                     style={{ color: COLOR.gold, background: `${COLOR.gold}18` }}>
+                  <AlertCircle size={13} /> 내 체크({myPretty})가 팀 마감({prettyMonth})보다 앞섬
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* 자금 현황 컷오프 라벨 */}
       <div className="flex items-center justify-between flex-wrap gap-2 px-1" style={{ color: COLOR.textMute }}>
         <div className="text-xs flex items-center gap-2">
@@ -2650,7 +2759,7 @@ function CategoryAnalysisView({ metrics }) {
 // ============================================================================
 //  IMPORT VIEW
 // ============================================================================
-function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, accessToken, setAccessToken, tokenClient, setTokenClient }) {
+function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, accessToken, setAccessToken, tokenClient, setTokenClient, teamSettings, setTeamSettings }) {
   const [mode, setMode] = useState('file'); // 'file' | 'drive'
   const [importStatus, setImportStatus] = useState({});
   const fileRefs = { accounts: useRef(null), transactions: useRef(null), plans: useRef(null) };
@@ -2775,9 +2884,50 @@ function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, a
       }
       setAccessToken(response.access_token);
       setSyncStatus('success');
-      setSyncMsg('Drive에 연결되었습니다. "데이터 동기화" 버튼을 눌러주세요.');
+      setSyncMsg('Drive에 연결되었습니다. 자동 동기화 중...');
+      // 자동 동기화: 연결 직후 바로 실행 (토큰 state 반영 대기 후)
+      setTimeout(() => syncFromDriveWithToken(response.access_token), 200);
     };
     tokenClient.requestAccessToken({ prompt: '' });
+  };
+
+  // 명시적 토큰으로 동기화 실행 (자동 동기화용 - accessToken state 업데이트 대기 필요 없음)
+  const syncFromDriveWithToken = async (token) => {
+    if (!token) return;
+    const ssid = extractSpreadsheetId(driveSettings.spreadsheetUrl);
+    if (!ssid) {
+      setSyncStatus('error');
+      setSyncMsg('유효한 스프레드시트 URL이 아닙니다.');
+      return;
+    }
+    setSyncStatus('loading');
+    setSyncMsg('동기화 중...');
+    try {
+      const [accArr, txArr, planArr, settingsArr] = await Promise.all([
+        fetchSheetArray(ssid, driveSettings.tabs.accounts, token),
+        fetchSheetArray(ssid, driveSettings.tabs.transactions, token),
+        fetchSheetArray(ssid, driveSettings.tabs.plans, token),
+        fetchSheetArray(ssid, driveSettings.tabs.settings || '설정', token).catch(() => []),
+      ]);
+      const accHR = sheetArrayToRowsWithHeaders(accArr);
+      const txHR = sheetArrayToRowsWithHeaders(txArr);
+      const planHR = sheetArrayToRowsWithHeaders(planArr);
+      const accounts = parseAccountsFile(accHR.headers, accHR.rows);
+      const transactions = parseActualsFile(txHR.headers, txHR.rows);
+      const plans = parsePlansFile(planHR.headers, planHR.rows);
+      const parsedSettings = parseTeamSettings(settingsArr);
+      setData({ accounts, transactions, plans });
+      try { localStorage.setItem('finance:v2:teamSettings', JSON.stringify(parsedSettings)); } catch {}
+      if (setTeamSettings) setTeamSettings(parsedSettings);
+      const now = new Date().toISOString();
+      try { localStorage.setItem('finance:v2:lastSync', now); } catch {}
+      setLastSync(now);
+      setSyncStatus('success');
+      setSyncMsg(`자동 동기화 완료 · 계좌 ${accounts.length} / 거래 ${transactions.length} / 계획 ${plans.length}`);
+    } catch (e) {
+      setSyncStatus('error');
+      setSyncMsg(`자동 동기화 실패: ${e.message}`);
+    }
   };
 
   const syncFromDrive = async () => {
@@ -2795,10 +2945,12 @@ function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, a
     setSyncStatus('loading');
     setSyncMsg('동기화 중...');
     try {
-      const [accArr, txArr, planArr] = await Promise.all([
+      const [accArr, txArr, planArr, settingsArr] = await Promise.all([
         fetchSheetArray(ssid, driveSettings.tabs.accounts, accessToken),
         fetchSheetArray(ssid, driveSettings.tabs.transactions, accessToken),
         fetchSheetArray(ssid, driveSettings.tabs.plans, accessToken),
+        // 설정 탭은 선택사항 - 없어도 에러 안 남
+        fetchSheetArray(ssid, driveSettings.tabs.settings || '설정', accessToken).catch(() => []),
       ]);
       // ⭐ CSV 텍스트로 변환 후 파일 업로드와 완전히 동일한 파서 사용
       // 이렇게 하면 Sheets 동기화 = CSV 업로드 결과가 100% 일치
@@ -2809,6 +2961,9 @@ function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, a
       const accounts = parseAccountsFile(accHR.headers, accHR.rows);
       const transactions = parseActualsFile(txHR.headers, txHR.rows);
       const plans = parsePlansFile(planHR.headers, planHR.rows);
+
+      // 설정 탭 파싱: 2열(키/값) 테이블
+      const parsedSettings = parseTeamSettings(settingsArr);
 
       // 계좌 매칭 확인
       let unmatchedMsg = '';
@@ -2822,6 +2977,9 @@ function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, a
       }
 
       setData({ accounts, transactions, plans });
+      // 팀 설정 저장 (마감월 등)
+      try { localStorage.setItem('finance:v2:teamSettings', JSON.stringify(parsedSettings)); } catch {}
+      if (setTeamSettings) setTeamSettings(parsedSettings);
       const now = new Date().toISOString();
       try { localStorage.setItem('finance:v2:lastSync', now); } catch {}
       setLastSync(now);
@@ -3297,6 +3455,8 @@ function FinanceDashboard() {
   const [data, setData] = useState({ accounts: [], transactions: [], plans: [] });
   const [loaded, setLoaded] = useState(false);
   const [entityMenuOpen, setEntityMenuOpen] = useState(false);
+  // 팀 설정 (Google Sheets의 "설정" 탭에서 동기화되는 공용 정보)
+  const [teamSettings, setTeamSettings] = useState({ closingMonth: '', closedBy: '', closedAt: '', note: '' });
   // Google Drive 연동 상태
   const [driveSettings, setDriveSettings] = useState(DEFAULT_DRIVE);
   const [accessToken, setAccessToken] = useState(null); // session only (never persisted)
@@ -3315,6 +3475,11 @@ function FinanceDashboard() {
         plans: p ? JSON.parse(p) : [],
       });
       if (am) setActualizedMonths(new Set(JSON.parse(am)));
+      // 팀 설정 로드 (마감월 등)
+      try {
+        const ts = localStorage.getItem('finance:v2:teamSettings');
+        if (ts) setTeamSettings(JSON.parse(ts));
+      } catch {}
       if (dr) {
         const parsed = JSON.parse(dr);
         setDriveSettings({
@@ -3350,6 +3515,66 @@ function FinanceDashboard() {
       localStorage.setItem(STORAGE_KEYS.drive, JSON.stringify(driveSettings));
     } catch {}
   }, [driveSettings, loaded]);
+
+  // ⭐ 접속 시 자동 동기화
+  // 조건: 이전에 Drive 설정이 있고 (Client ID + 시트 URL 저장됨),
+  //       Google GIS가 로드되었으며, 아직 accessToken이 없는 경우
+  // 동작: 팝업 없이 Silent 로그인 시도 → 성공하면 자동 동기화
+  //       (최근 로그인 이력이 있고 토큰이 살아있으면 팝업 없이 즉시 동기화됨)
+  const autoSyncAttempted = React.useRef(false);
+  useEffect(() => {
+    if (!loaded) return;
+    if (autoSyncAttempted.current) return;
+    if (!driveSettings.clientId || !driveSettings.spreadsheetUrl) return;
+    if (accessToken) return;
+    if (!window.google?.accounts?.oauth2) return;
+
+    autoSyncAttempted.current = true;
+
+    // Silent 토큰 요청 (prompt: 'none')
+    try {
+      const silentClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: driveSettings.clientId,
+        scope: OAUTH_SCOPE,
+        callback: async (response) => {
+          if (response.error || !response.access_token) {
+            // Silent 실패 = 사용자가 직접 "Drive 연결" 눌러야 함 (정상)
+            return;
+          }
+          setAccessToken(response.access_token);
+          // 자동 동기화 실행
+          const ssid = extractSpreadsheetId(driveSettings.spreadsheetUrl);
+          if (!ssid) return;
+          try {
+            const [accArr, txArr, planArr, settingsArr] = await Promise.all([
+              fetchSheetArray(ssid, driveSettings.tabs.accounts, response.access_token),
+              fetchSheetArray(ssid, driveSettings.tabs.transactions, response.access_token),
+              fetchSheetArray(ssid, driveSettings.tabs.plans, response.access_token),
+              fetchSheetArray(ssid, driveSettings.tabs.settings || '설정', response.access_token).catch(() => []),
+            ]);
+            const accHR = sheetArrayToRowsWithHeaders(accArr);
+            const txHR = sheetArrayToRowsWithHeaders(txArr);
+            const planHR = sheetArrayToRowsWithHeaders(planArr);
+            const accounts = parseAccountsFile(accHR.headers, accHR.rows);
+            const transactions = parseActualsFile(txHR.headers, txHR.rows);
+            const plans = parsePlansFile(planHR.headers, planHR.rows);
+            const parsedSettings = parseTeamSettings(settingsArr);
+            setData({ accounts, transactions, plans });
+            try { localStorage.setItem('finance:v2:teamSettings', JSON.stringify(parsedSettings)); } catch {}
+            setTeamSettings(parsedSettings);
+            const now = new Date().toISOString();
+            try { localStorage.setItem('finance:v2:lastSync', now); } catch {}
+          } catch (e) {
+            // 자동 동기화 실패해도 UI 에러 표시 안 함 (사용자가 수동으로 다시 시도 가능)
+            console.warn('Auto-sync failed:', e.message);
+          }
+        },
+      });
+      silentClient.requestAccessToken({ prompt: 'none' });
+    } catch (e) {
+      // GIS 초기화 실패 = 수동 로그인 필요
+    }
+  }, [loaded, driveSettings.clientId, driveSettings.spreadsheetUrl]);
 
   const metrics = useMemo(() => calcMetrics(data, entityFilter, planTypeChoice, actualizedMonths, planYearFilter), [data, entityFilter, planTypeChoice, actualizedMonths, planYearFilter]);
   const allEntities = metrics.allEntities || [];
@@ -3431,7 +3656,7 @@ function FinanceDashboard() {
             </Card>
           )}
 
-          {hasData && tab === 'dashboard'    && <DashboardView    metrics={metrics} planTypeChoice={planTypeChoice} setPlanTypeChoice={setPlanTypeChoice} planYearFilter={planYearFilter} setPlanYearFilter={setPlanYearFilter} actualizedMonths={actualizedMonths} setActualizedMonths={setActualizedMonths} />}
+          {hasData && tab === 'dashboard'    && <DashboardView    metrics={metrics} planTypeChoice={planTypeChoice} setPlanTypeChoice={setPlanTypeChoice} planYearFilter={planYearFilter} setPlanYearFilter={setPlanYearFilter} actualizedMonths={actualizedMonths} setActualizedMonths={setActualizedMonths} teamSettings={teamSettings} />}
           {hasData && tab === 'accounts'     && <AccountsView     metrics={metrics} />}
           {hasData && tab === 'transactions' && <TransactionsView metrics={metrics} />}
           {hasData && tab === 'plans'        && <PlansView        metrics={metrics} />}
@@ -3441,6 +3666,7 @@ function FinanceDashboard() {
             driveSettings={driveSettings} setDriveSettings={setDriveSettings}
             accessToken={accessToken} setAccessToken={setAccessToken}
             tokenClient={tokenClient} setTokenClient={setTokenClient}
+            teamSettings={teamSettings} setTeamSettings={setTeamSettings}
           />}
         </main>
 
