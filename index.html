@@ -1242,26 +1242,6 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
   const fmtRunway = (n) => !isFinite(n) ? '∞' : n > 99 ? '99+' : n.toFixed(1);
   const runwayAccent = (n) => !isFinite(n) ? COLOR.success : n < 6 ? COLOR.danger : n < 12 ? COLOR.gold : COLOR.success;
 
-  // 체크박스 임시 상태 (저장 버튼 누를 때까지 반영 안됨)
-  const [draftActualized, setDraftActualized] = useState(() => new Set(actualizedMonths));
-  const [draftDirty, setDraftDirty] = useState(false);
-  useEffect(() => { setDraftActualized(new Set(actualizedMonths)); setDraftDirty(false); }, [actualizedMonths]);
-
-  const toggleDraft = (month) => {
-    const next = new Set(draftActualized);
-    if (next.has(month)) next.delete(month); else next.add(month);
-    setDraftActualized(next);
-    setDraftDirty(true);
-  };
-  const saveActualized = () => {
-    setActualizedMonths(new Set(draftActualized));
-    setDraftDirty(false);
-  };
-  const resetDraft = () => {
-    setDraftActualized(new Set(actualizedMonths));
-    setDraftDirty(false);
-  };
-
   return (
     <div className="space-y-6">
       {/* 팀 마감월 배너 (시트 "설정" 탭에서 동기화됨) */}
@@ -1338,7 +1318,7 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
           <CalendarIcon size={12} />
           <span>자금 현황 기준:</span>
           <b style={{ color: useMonthFilter ? COLOR.gold : COLOR.textDim, fontFamily: 'var(--mono)' }}>{cutoffLabel}</b>
-          {!useMonthFilter && <span className="text-[11px]" style={{ color: COLOR.textMute }}>(월별 체크박스로 컷오프 설정 가능)</span>}
+          {!useMonthFilter && <span className="text-[11px]" style={{ color: COLOR.textMute }}>(시트 "설정" 탭에 마감월 입력 시 자동 적용)</span>}
         </div>
         <div className="text-[11px]">기초금액 + 체크된 월 입출금 실적 합산</div>
       </div>
@@ -1776,36 +1756,28 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
           진한 막대 = 실적 · 연한 막대 = 계획 · 금색 면적 = 누적 잔액 추이
         </div>
 
-        {/* 월별 체크리스트 + 저장 */}
+        {/* 월별 실적/계획 적용 현황 (읽기 전용 - 마감월은 시트에서 관리) */}
         <div className="mt-5 pt-4" style={{ borderTop: `1px solid ${COLOR.border}` }}>
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <div className="text-xs font-medium" style={{ color: COLOR.text }}>
-              월별 실적 반영 설정 <span style={{ color: COLOR.textMute, fontWeight: 'normal' }}>(체크하면 실적, 해제하면 계획)</span>
+              월별 적용 현황
+              <span style={{ color: COLOR.textMute, fontWeight: 'normal' }} className="ml-2">
+                (마감월까지 자동 실적 · 나머지는 계획)
+              </span>
             </div>
-            <div className="flex items-center gap-2">
-              {draftDirty && (
-                <>
-                  <span className="text-[11px]" style={{ color: COLOR.gold }}>변경사항 있음</span>
-                  <button onClick={resetDraft} className="px-2.5 py-1 text-xs rounded-lg"
-                          style={{ background: 'transparent', color: COLOR.textDim, border: `1px solid ${COLOR.border}` }}>
-                    되돌리기
-                  </button>
-                </>
-              )}
-              <button onClick={saveActualized}
-                      disabled={!draftDirty}
-                      className="px-3 py-1 text-xs font-semibold rounded-lg"
-                      style={{ background: draftDirty ? COLOR.gold : COLOR.surfaceEl, color: draftDirty ? '#fff' : COLOR.textMute }}>
-                저장
-              </button>
-            </div>
+            {teamSettings && teamSettings.closingMonth && (
+              <div className="text-[11px] flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+                   style={{ color: COLOR.success, background: `${COLOR.success}15` }}>
+                <Lock size={11} /> 팀 마감 {teamSettings.closingMonth}
+              </div>
+            )}
           </div>
           <div className="overflow-x-auto" style={{ maxHeight: 280, overflowY: 'auto' }}>
             <table className="w-full text-xs">
               <thead style={{ position: 'sticky', top: 0, background: COLOR.surfaceEl }}>
                 <tr>
-                  <th className="px-3 py-2 text-left" style={{ color: COLOR.textMute, width: 50 }}>실적</th>
                   <th className="px-3 py-2 text-left" style={{ color: COLOR.textMute }}>월</th>
+                  <th className="px-3 py-2 text-center" style={{ color: COLOR.textMute, width: 60 }}>구분</th>
                   <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>실적 입금</th>
                   <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>실적 출금</th>
                   <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>계획 입금</th>
@@ -1815,17 +1787,22 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
               </thead>
               <tbody>
                 {mergedMonthly.filter(m => !m.isOpening).map(m => {
-                  const isChecked = draftActualized.has(m.month);
+                  const isActualized = m.isActualized;
                   return (
-                    <tr key={m.month} style={{ borderTop: `1px solid ${COLOR.border}` }}>
-                      <td className="px-3 py-2">
-                        <input type="checkbox" checked={isChecked} onChange={() => toggleDraft(m.month)}
-                               disabled={!m.hasActual}
-                               style={{ accentColor: COLOR.gold, cursor: m.hasActual ? 'pointer' : 'not-allowed' }} />
-                      </td>
+                    <tr key={m.month} style={{ borderTop: `1px solid ${COLOR.border}`, background: isActualized ? `${COLOR.success}08` : 'transparent' }}>
                       <td className="px-3 py-2" style={{ color: COLOR.text, fontFamily: 'var(--mono)' }}>
                         {m.month}
-                        {!m.hasActual && <span className="ml-2 text-[9px]" style={{ color: COLOR.textMute }}>실적없음</span>}
+                        {!m.hasActual && !m.hasPlan && <span className="ml-2 text-[9px]" style={{ color: COLOR.textMute }}>데이터 없음</span>}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <span className="text-[10px] px-2 py-0.5 rounded font-medium"
+                              style={{
+                                color: isActualized ? COLOR.success : COLOR.textDim,
+                                background: isActualized ? `${COLOR.success}20` : COLOR.surfaceEl,
+                                border: `1px solid ${isActualized ? COLOR.success + '40' : COLOR.border}`,
+                              }}>
+                          {isActualized ? '실적' : '계획'}
+                        </span>
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums" style={{ fontFamily: 'var(--mono)', color: m.hasActual ? COLOR.success : COLOR.textMute }}>
                         {m.hasActual ? formatCompactKRW(m.actualInflow) : '—'}
@@ -1841,7 +1818,6 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums font-medium" style={{ fontFamily: 'var(--mono)', color: m.net >= 0 ? COLOR.success : COLOR.danger }}>
                         {formatCompactKRW(m.net)}
-                        <span className="ml-1 text-[9px]" style={{ color: COLOR.textMute }}>{m.isActualized ? '실적' : '계획'}</span>
                       </td>
                     </tr>
                   );
@@ -1852,6 +1828,13 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
               </tbody>
             </table>
           </div>
+          {!teamSettings?.closingMonth && (
+            <div className="mt-3 text-[11px] flex items-start gap-1.5 px-3 py-2 rounded-lg"
+                 style={{ color: COLOR.gold, background: `${COLOR.gold}10`, border: `1px solid ${COLOR.gold}30` }}>
+              <AlertCircle size={12} style={{ marginTop: 1 }} />
+              <span>Google Sheets의 <b>설정</b> 탭에 <b>마감월</b> 값을 넣으면 자동으로 실적/계획이 구분됩니다. 값이 없으면 모든 월이 계획으로 처리됩니다.</span>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -2047,7 +2030,7 @@ function AccountsView({ metrics }) {
           <CalendarIcon size={12} />
           <span>실적 반영 기준:</span>
           <b style={{ color: metrics.useMonthFilter ? COLOR.gold : COLOR.textDim, fontFamily: 'var(--mono)' }}>{metrics.cutoffLabel}</b>
-          {!metrics.useMonthFilter && <span className="text-[11px]" style={{ color: COLOR.textMute }}>(대시보드의 월별 체크박스로 설정)</span>}
+          {!metrics.useMonthFilter && <span className="text-[11px]" style={{ color: COLOR.textMute }}>(시트 "설정" 탭에 마감월 입력 시 자동 적용)</span>}
           {excludedCreditCount > 0 && (
             <span className="text-[11px] px-2 py-0.5 rounded" style={{ color: COLOR.purple, background: `${COLOR.purple}14`, border: `1px solid ${COLOR.purple}40` }}>
               한도 사용중 계좌 {excludedCreditCount}개는 한도현황에서 별도 확인
@@ -3576,7 +3559,33 @@ function FinanceDashboard() {
     }
   }, [loaded, driveSettings.clientId, driveSettings.spreadsheetUrl]);
 
-  const metrics = useMemo(() => calcMetrics(data, entityFilter, planTypeChoice, actualizedMonths, planYearFilter), [data, entityFilter, planTypeChoice, actualizedMonths, planYearFilter]);
+  // ⭐ 마감월 기준 실적 반영 월 자동 계산
+  // 시트 "설정" 탭의 marginMonth="2026-03" → {2026-01, 2026-02, 2026-03}
+  // 이렇게 하면 전 사용자가 동일한 기준으로 대시보드를 봄
+  const effectiveActualizedMonths = useMemo(() => {
+    if (!teamSettings.closingMonth) return new Set();
+    const m = teamSettings.closingMonth.match(/^(\d{4})-(\d{2})$/);
+    if (!m) return new Set();
+    const year = parseInt(m[1]);
+    const month = parseInt(m[2]);
+    // 데이터 내 가장 이른 거래월 ~ 마감월까지 전부 포함
+    const allTxMonths = [...new Set((data.transactions || [])
+      .map(t => t.date?.slice(0, 7))
+      .filter(s => /^\d{4}-\d{2}$/.test(s || '')))].sort();
+    const earliest = allTxMonths[0] || `${year}-01`;
+    // earliest부터 closingMonth까지 월 시퀀스 생성
+    const result = new Set();
+    const [ey, em] = earliest.split('-').map(Number);
+    let curY = ey, curM = em;
+    while (curY < year || (curY === year && curM <= month)) {
+      result.add(`${curY}-${String(curM).padStart(2, '0')}`);
+      curM++;
+      if (curM > 12) { curM = 1; curY++; }
+    }
+    return result;
+  }, [teamSettings.closingMonth, data.transactions]);
+
+  const metrics = useMemo(() => calcMetrics(data, entityFilter, planTypeChoice, effectiveActualizedMonths, planYearFilter), [data, entityFilter, planTypeChoice, effectiveActualizedMonths, planYearFilter]);
   const allEntities = metrics.allEntities || [];
   const currentEntity = entityFilter === 'all' ? '전체 법인' : entityFilter;
 
@@ -3656,7 +3665,7 @@ function FinanceDashboard() {
             </Card>
           )}
 
-          {hasData && tab === 'dashboard'    && <DashboardView    metrics={metrics} planTypeChoice={planTypeChoice} setPlanTypeChoice={setPlanTypeChoice} planYearFilter={planYearFilter} setPlanYearFilter={setPlanYearFilter} actualizedMonths={actualizedMonths} setActualizedMonths={setActualizedMonths} teamSettings={teamSettings} />}
+          {hasData && tab === 'dashboard'    && <DashboardView    metrics={metrics} planTypeChoice={planTypeChoice} setPlanTypeChoice={setPlanTypeChoice} planYearFilter={planYearFilter} setPlanYearFilter={setPlanYearFilter} actualizedMonths={effectiveActualizedMonths} setActualizedMonths={setActualizedMonths} teamSettings={teamSettings} />}
           {hasData && tab === 'accounts'     && <AccountsView     metrics={metrics} />}
           {hasData && tab === 'transactions' && <TransactionsView metrics={metrics} />}
           {hasData && tab === 'plans'        && <PlansView        metrics={metrics} />}
