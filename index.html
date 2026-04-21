@@ -1247,66 +1247,32 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
       {/* 팀 마감월 배너 (시트 "설정" 탭에서 동기화됨) */}
       {teamSettings && teamSettings.closingMonth && (() => {
         const closing = teamSettings.closingMonth; // "2026-03" 형식
-        // 마감월까지 전부 체크되어 있는지 확인
-        const myLatest = actualizedMonths.size > 0 ? [...actualizedMonths].sort().pop() : '';
-        const isMatched = myLatest === closing;
-        const isBehind = !myLatest || myLatest < closing;
-        const isAhead = myLatest > closing;
-
         // 마감월을 "2026년 3월" 형식으로 표시
         const prettyMonth = (() => {
           const m = closing.match(/^(\d{4})-(\d{2})$/);
           if (m) return `${m[1]}년 ${parseInt(m[2])}월`;
           return closing;
         })();
-        const myPretty = (() => {
-          const m = (myLatest || '').match(/^(\d{4})-(\d{2})$/);
-          if (m) return `${m[1]}년 ${parseInt(m[2])}월`;
-          return myLatest || '없음';
-        })();
-
-        const statusColor = isMatched ? COLOR.success : (isBehind ? COLOR.danger : COLOR.gold);
-        const statusBg = isMatched ? `${COLOR.success}12` : (isBehind ? `${COLOR.danger}12` : `${COLOR.gold}12`);
-        const statusBorder = isMatched ? `${COLOR.success}50` : (isBehind ? `${COLOR.danger}55` : `${COLOR.gold}55`);
+        const statusColor = COLOR.success;
+        const statusBg = `${COLOR.success}12`;
+        const statusBorder = `${COLOR.success}50`;
 
         return (
-          <div className="rounded-xl p-4 flex items-center justify-between flex-wrap gap-3"
+          <div className="rounded-xl p-4 flex items-center gap-3 flex-wrap"
                style={{ background: statusBg, border: `1px solid ${statusBorder}` }}>
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="rounded-lg p-2 flex items-center justify-center"
-                   style={{ background: `${statusColor}22`, color: statusColor }}>
-                <Lock size={16} />
-              </div>
-              <div>
-                <div className="text-sm font-semibold" style={{ color: COLOR.text }}>
-                  실적 마감: {prettyMonth}까지 확정
-                </div>
-                <div className="text-[11px] mt-0.5" style={{ color: COLOR.textDim }}>
-                  {teamSettings.closedBy && `담당: ${teamSettings.closedBy}`}
-                  {teamSettings.closedAt && `${teamSettings.closedBy ? ' · ' : ''}확정일: ${teamSettings.closedAt}`}
-                  {teamSettings.note && ` · ${teamSettings.note}`}
-                </div>
-              </div>
+            <div className="rounded-lg p-2 flex items-center justify-center"
+                 style={{ background: `${statusColor}22`, color: statusColor }}>
+              <Lock size={16} />
             </div>
-            <div className="flex items-center gap-2">
-              {isMatched && (
-                <div className="text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"
-                     style={{ color: COLOR.success, background: `${COLOR.success}18` }}>
-                  <CheckCircle2 size={13} /> 내 체크 설정 일치
-                </div>
-              )}
-              {isBehind && (
-                <div className="text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"
-                     style={{ color: COLOR.danger, background: `${COLOR.danger}18` }}>
-                  <AlertCircle size={13} /> 내 체크: {myPretty} · 마감 기준으로 업데이트 필요
-                </div>
-              )}
-              {isAhead && (
-                <div className="text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"
-                     style={{ color: COLOR.gold, background: `${COLOR.gold}18` }}>
-                  <AlertCircle size={13} /> 내 체크({myPretty})가 팀 마감({prettyMonth})보다 앞섬
-                </div>
-              )}
+            <div>
+              <div className="text-sm font-semibold" style={{ color: COLOR.text }}>
+                실적 마감: {prettyMonth}까지 확정
+              </div>
+              <div className="text-[11px] mt-0.5" style={{ color: COLOR.textDim }}>
+                {teamSettings.closedBy && `담당: ${teamSettings.closedBy}`}
+                {teamSettings.closedAt && `${teamSettings.closedBy ? ' · ' : ''}확정일: ${teamSettings.closedAt}`}
+                {teamSettings.note && ` · ${teamSettings.note}`}
+              </div>
             </div>
           </div>
         );
