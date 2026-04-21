@@ -1,0 +1,3461 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Treasury · 그룹 통합 자금관리</title>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.css">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif&display=swap" rel="stylesheet">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+<script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+
+<style>
+  :root {
+    --sans: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --serif: 'Instrument Serif', Georgia, serif;
+  }
+  body { background: #f4f6fa; margin: 0; font-family: var(--sans); color: #1a2544; }
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background: #c6cfe0; border-radius: 4px; }
+  *::-webkit-scrollbar-thumb:hover { background: #9ba8c4; }
+  button { cursor: pointer; border: none; font-family: inherit; }
+  button:hover { filter: brightness(1.06); }
+  button:disabled { cursor: not-allowed; opacity: 0.5; }
+  input:focus, textarea:focus, select:focus { border-color: #2c4d8a !important; outline: none; box-shadow: 0 0 0 3px rgba(44, 77, 138, 0.12); }
+  .tabular-nums { font-variant-numeric: tabular-nums; }
+  #loading {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: #f4f6fa; color: #5b6a8a; font-family: var(--sans); z-index: 9999;
+  }
+  .drop-zone-active { background: rgba(44, 77, 138, 0.06) !important; border-color: #2c4d8a !important; }
+</style>
+</head>
+<body>
+<div id="loading">Loading Treasury…</div>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="env,react">
+const { useState, useEffect, useMemo, useRef } = React;
+const {
+  LineChart, Line, BarChart, Bar, ComposedChart, AreaChart, Area,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, ReferenceLine, Cell,
+} = Recharts;
+
+// ============================================================================
+//  ICONS
+// ============================================================================
+const Ic = (d) => ({ size = 16, style = {}, strokeWidth = 2, className = '' }) =>
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24"
+       fill="none" stroke="currentColor" strokeWidth={strokeWidth}
+       strokeLinecap="round" strokeLinejoin="round" style={style} className={className}
+       dangerouslySetInnerHTML={{ __html: d }} />;
+
+const Wallet = Ic('<path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/>');
+const Activity = Ic('<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>');
+const TrendingUp = Ic('<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>');
+const TrendingDown = Ic('<polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/>');
+const Flame = Ic('<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>');
+const Target = Ic('<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>');
+const CreditCard = Ic('<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>');
+const Building2 = Ic('<path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/>');
+const LayoutDashboard = Ic('<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>');
+const Receipt = Ic('<path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 17.5v-11"/>');
+const CalendarIcon = Ic('<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>');
+const Upload = Ic('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>');
+const Download = Ic('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>');
+const RotateCcw = Ic('<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>');
+const CheckCircle2 = Ic('<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>');
+const XCircle = Ic('<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>');
+const DollarSign = Ic('<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>');
+const Search = Ic('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>');
+const ChevronDown = Ic('<polyline points="6 9 12 15 18 9"/>');
+const X = Ic('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>');
+const FilterIcon = Ic('<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>');
+const AlertCircle = Ic('<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>');
+const Cloud = Ic('<path d="M17.5 19H9a7 7 0 1 1 6.71-9H17.5a4.5 4.5 0 0 1 0 9Z"/>');
+const RefreshCw = Ic('<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>');
+const Link2 = Ic('<path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/>');
+const Settings = Ic('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>');
+const ExternalLink = Ic('<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>');
+
+// ============================================================================
+//  CONFIG
+// ============================================================================
+const COLOR = {
+  // 배경 (라이트 테마, 남색 계열)
+  bg: '#f4f6fa',          // 페이지 배경 (연한 회색-파랑)
+  surface: '#ffffff',      // 카드 배경 (흰색)
+  surfaceEl: '#eef2f8',    // 입력/서브 요소 배경 (더 연한 블루)
+  border: '#dde3ee',       // 기본 보더 (연한 남색 그레이)
+  borderHi: '#c5cfe0',     // 강조 보더
+
+  // 텍스트
+  text: '#1a2544',         // 메인 텍스트 (깊은 남색)
+  textDim: '#4a5878',      // 중간 텍스트
+  textMute: '#8a95ad',     // 흐린 텍스트
+
+  // 브랜드 (기존 gold 변수 이름 유지하되 값만 남색으로)
+  gold: '#2c4d8a',         // 메인 브랜드 남색 (기존 gold 자리)
+  goldHi: '#3d6aad',       // 강조 남색
+
+  // 시맨틱 컬러 (라이트 테마 톤)
+  success: '#2d8a5f',      // 초록 (입금/잔액 +)
+  danger: '#c54141',       // 빨강 (출금/잔액 -)
+  info: '#3d6aad',         // 정보 (파랑)
+  purple: '#7a5fb5',       // 보라 (한도/R&D)
+};
+const CHART_PALETTE = ['#2c4d8a', '#3d6aad', '#6588c4', '#7a5fb5', '#2d8a5f', '#c54141'];
+const STORAGE_KEYS = {
+  accounts: 'finance:v2:accounts',
+  transactions: 'finance:v2:transactions',
+  plans: 'finance:v2:plans',
+  drive: 'finance:v2:drive',
+};
+const OAUTH_SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly';
+const DEFAULT_DRIVE = {
+  clientId: '',
+  spreadsheetUrl: '',
+  tabs: { accounts: '마스터_계좌', transactions: '마스터_계좌입출금실적', plans: '마스터_자금계획' },
+};
+const MONTH_ABBR_TO_NUM = {
+  Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06',
+  Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12',
+};
+
+// ============================================================================
+//  CSV PARSER — handles BOM, CRLF, quoted values with commas, trailing empty cols
+// ============================================================================
+// ============================================================================
+//  GOOGLE DRIVE / SHEETS API HELPERS
+// ============================================================================
+function extractSpreadsheetId(urlOrId) {
+  if (!urlOrId) return null;
+  const s = urlOrId.trim();
+  const m = s.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (m) return m[1];
+  if (/^[a-zA-Z0-9-_]{30,}$/.test(s)) return s;
+  return null;
+}
+
+async function fetchSheetArray(spreadsheetId, sheetName, token) {
+  const range = encodeURIComponent(`${sheetName}!A1:Z10000`);
+  // FORMATTED_VALUE: 사용자가 시트에서 보는 그대로 문자열 반환
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?valueRenderOption=FORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return data.values || [];
+}
+
+// Sheets 2D 배열 → CSV 텍스트 변환 (CSV 업로드와 동일한 파싱 경로 보장)
+function sheetArrayToCSV(values) {
+  if (!values || values.length === 0) return '';
+  return values.map(row => {
+    return (row || []).map(cell => {
+      const s = cell == null ? '' : String(cell);
+      // 콤마, 따옴표, 줄바꿈 포함하면 따옴표로 감싸기 (CSV 표준)
+      if (/[",\n\r]/.test(s)) {
+        return `"${s.replace(/"/g, '""')}"`;
+      }
+      return s;
+    }).join(',');
+  }).join('\n');
+}
+
+// Sheets 동기화: 2D 배열 → CSV 문자열 → 파일 업로드와 동일한 parseCSV 사용
+function sheetArrayToRowsWithHeaders(values) {
+  const csvText = sheetArrayToCSV(values);
+  return parseCSV(csvText);
+}
+
+// Google Sheets API의 2D 배열을 { headers, rows } 로 변환
+function arrayToRowsWithHeaders(values) {
+  if (!values || values.length === 0) return { headers: [], rows: [] };
+  const headers = values[0].map(h => String(h || '').trim());
+  let lastNonEmpty = headers.length - 1;
+  while (lastNonEmpty >= 0 && headers[lastNonEmpty] === '') lastNonEmpty--;
+  const cleanHeaders = headers.slice(0, lastNonEmpty + 1);
+  const rows = values.slice(1).map(row => {
+    const obj = {};
+    cleanHeaders.forEach((h, i) => { obj[h] = row[i] != null ? String(row[i]).trim() : ''; });
+    return obj;
+  }).filter(obj => Object.values(obj).some(v => v !== ''));
+  return { headers: cleanHeaders, rows };
+}
+
+// ============================================================================
+//  SPINNER (loading indicator)
+// ============================================================================
+function Spinner({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" style={{ animation: 'spin 1s linear infinite' }}>
+      <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" fill="none" strokeDasharray="40 20" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function parseCSV(text) {
+  // Remove BOM
+  text = text.replace(/^\uFEFF/, '');
+  // Normalize line endings
+  text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  const rows = [];
+  let cur = '', inQuote = false, row = [];
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      if (inQuote && text[i + 1] === '"') { cur += '"'; i++; }
+      else inQuote = !inQuote;
+    } else if (c === ',' && !inQuote) {
+      row.push(cur); cur = '';
+    } else if (c === '\n' && !inQuote) {
+      row.push(cur); cur = '';
+      rows.push(row); row = [];
+    } else cur += c;
+  }
+  if (cur !== '' || row.length > 0) { row.push(cur); rows.push(row); }
+
+  // Drop trailing fully empty rows
+  while (rows.length > 0 && rows[rows.length - 1].every(c => c === '')) rows.pop();
+  if (rows.length === 0) return { headers: [], rows: [] };
+
+  // Headers: trim and drop trailing empty headers
+  const rawHeaders = rows[0].map(h => h.trim());
+  let lastNonEmpty = rawHeaders.length - 1;
+  while (lastNonEmpty >= 0 && rawHeaders[lastNonEmpty] === '') lastNonEmpty--;
+  const headers = rawHeaders.slice(0, lastNonEmpty + 1);
+
+  const dataRows = rows.slice(1).map(r => {
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = (r[i] ?? '').trim(); });
+    return obj;
+  }).filter(obj => Object.values(obj).some(v => v !== ''));
+  return { headers, rows: dataRows };
+}
+
+// ============================================================================
+//  UTILITIES
+// ============================================================================
+function parseNumber(s) {
+  if (s == null || s === '') return 0;
+  if (typeof s === 'number') return isFinite(s) ? s : 0;
+  if (typeof s === 'boolean') return s ? 1 : 0;
+  const str = String(s).trim();
+  if (!str) return 0;
+  const negWrapped = /^\(.*\)$/.test(str);
+  // 콤마, 통화기호, 공백, 괄호 제거. 마이너스는 보존
+  const cleaned = str.replace(/[,₩$\s원()]/g, '');
+  if (cleaned === '' || cleaned === '-') return 0;
+  const n = parseFloat(cleaned);
+  if (isNaN(n)) return 0;
+  return negWrapped ? -n : n;
+}
+
+// 한국식 날짜 "2026. 1. 6", "2026-01-06", "2026/1/6", ISO, Excel serial 등 → "YYYY-MM-DD"
+function normalizeDate(s) {
+  if (s == null || s === '') return '';
+  // Date 객체
+  if (s instanceof Date && !isNaN(s)) {
+    return `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
+  }
+  // Excel/Sheets 일련번호 (1900년 기준 누적 일수)
+  if (typeof s === 'number' && s > 20000 && s < 100000) {
+    const excelEpoch = new Date(1899, 11, 30);
+    const d = new Date(excelEpoch.getTime() + s * 86400000);
+    if (!isNaN(d)) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  const str = String(s).trim();
+  if (!str) return '';
+  // ISO 형식: "2026-01-06T00:00:00.000Z" 또는 "2026-01-06"
+  if (/^\d{4}-\d{1,2}-\d{1,2}/.test(str)) {
+    const m = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  }
+  // "2026. 1. 6" or "2026.1.6" or "2026/1/6"
+  const m = str.match(/^(\d{4})\s*[\.\-\/]\s*(\d{1,2})\s*[\.\-\/]\s*(\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  // "1/6/2026" 또는 "1-6-2026" (미국식: M/D/YYYY)
+  const mUS = str.match(/^(\d{1,2})\s*[\/\-]\s*(\d{1,2})\s*[\/\-]\s*(\d{4})/);
+  if (mUS) return `${mUS[3]}-${mUS[1].padStart(2, '0')}-${mUS[2].padStart(2, '0')}`;
+  // "20260106" 형태
+  const m2 = str.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (m2) return `${m2[1]}-${m2[2]}-${m2[3]}`;
+  // Date() 생성자로 마지막 시도
+  const d = new Date(str);
+  if (!isNaN(d)) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return str.slice(0, 10);
+}
+
+// "Apr-26" → "2026-04" / "Jan-27" → "2027-01" / 2026-04-01 → "2026-04"
+function normalizeMonthKey(s) {
+  if (s == null || s === '') return '';
+  // Date 객체
+  if (s instanceof Date && !isNaN(s)) {
+    return `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}`;
+  }
+  // Excel/Sheets 일련번호
+  if (typeof s === 'number' && s > 20000 && s < 100000) {
+    const excelEpoch = new Date(1899, 11, 30);
+    const d = new Date(excelEpoch.getTime() + s * 86400000);
+    if (!isNaN(d)) return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+  const str = String(s).trim();
+  if (!str) return '';
+  // 이미 YYYY-MM
+  if (/^\d{4}-\d{2}$/.test(str)) return str;
+  // Apr-26 형식 (CSV 원본)
+  const m = str.match(/^([A-Za-z]{3})-?(\d{2,4})$/);
+  if (m) {
+    const key = m[1].slice(0, 1).toUpperCase() + m[1].slice(1, 3).toLowerCase();
+    const monthNum = MONTH_ABBR_TO_NUM[key];
+    if (monthNum) {
+      let year = m[2];
+      if (year.length === 2) year = (parseInt(year) < 70 ? '20' : '19') + year;
+      return `${year}-${monthNum}`;
+    }
+  }
+  // "2026년 4월" 한국어 형식
+  const mKo = str.match(/(\d{4})\s*년?\s*(\d{1,2})\s*월?/);
+  if (mKo) return `${mKo[1]}-${mKo[2].padStart(2, '0')}`;
+  // 날짜 형식이면 앞 7자리
+  const d = normalizeDate(str);
+  if (/^\d{4}-\d{2}-\d{2}/.test(d)) return d.slice(0, 7);
+  return str;
+}
+
+function formatKRW(n, withSign = false) {
+  if (n == null || isNaN(n)) return '—';
+  const sign = n < 0 ? '-' : (withSign && n > 0 ? '+' : '');
+  return `${sign}₩${Math.abs(Math.round(n)).toLocaleString('ko-KR')}`;
+}
+function formatCompactKRW(n) {
+  if (n == null || isNaN(n)) return '—';
+  const abs = Math.abs(n); const sign = n < 0 ? '-' : '';
+  if (abs >= 100_000_000) return `${sign}${(abs / 100_000_000).toFixed(1)}억`;
+  if (abs >= 10_000)      return `${sign}${Math.round(abs / 10_000).toLocaleString()}만`;
+  return `${sign}${abs.toLocaleString()}`;
+}
+const formatPct = (n, d = 1) => (n == null || isNaN(n)) ? '—' : `${n.toFixed(d)}%`;
+const isYes = (v) => {
+  if (v == null || v === '') return false;
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v === 1;
+  const s = String(v).trim().toUpperCase();
+  return s === 'Y' || s === 'YES' || s === 'TRUE' || s === '1' || s === 'O' || s === '○';
+};
+const looksNumeric = (v) => {
+  if (v == null || v === '') return false;
+  const s = String(v).trim();
+  if (!s) return false;
+  // 숫자, 콤마, 소수점, 음수 부호, 괄호(음수 표기) 허용
+  return /^-?\(?\-?[\d,]+(\.\d+)?\)?$/.test(s.replace(/\s/g, ''));
+};
+// 테이블 셀 숫자 자동 콤마 서식 (정수만, 소수점 있으면 원본 유지)
+function formatTableNumber(v) {
+  if (v == null || v === '') return '';
+  const s = String(v).trim();
+  if (!s) return '';
+  // 괄호로 음수 표기된 경우 처리: (1,000) → -1000
+  let isNeg = false;
+  let clean = s.replace(/,/g, '').replace(/\s/g, '');
+  if (/^\(.*\)$/.test(clean)) {
+    isNeg = true;
+    clean = clean.slice(1, -1);
+  }
+  if (!/^-?\d+(\.\d+)?$/.test(clean)) return s;
+  const n = Number(clean) * (isNeg ? -1 : 1);
+  if (!isFinite(n)) return s;
+  if (n === 0) return '0';
+  // 정수면 콤마, 소수점 있으면 정수부만 콤마
+  if (Number.isInteger(n)) return n.toLocaleString('ko-KR');
+  const parts = Math.abs(n).toString().split('.');
+  return (n < 0 ? '-' : '') + Number(parts[0]).toLocaleString('ko-KR') + '.' + parts[1];
+}
+
+// ============================================================================
+//  CSV EXPORT
+// ============================================================================
+function exportCSV(filename, rows, headers) {
+  const headerLine = headers.map(h => `"${h}"`).join(',');
+  const lines = rows.map(row =>
+    headers.map(h => {
+      const v = row[h];
+      if (v == null) return '';
+      const s = String(v).replace(/"/g, '""');
+      return `"${s}"`;
+    }).join(',')
+  );
+  const csv = '\uFEFF' + [headerLine, ...lines].join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ============================================================================
+//  SPECIFIC FILE PARSERS (tailored to user's actual CSV structure)
+// ============================================================================
+// Accounts: 법인명, 계좌구분, 자금구분, 은행NO, 기초금액, 순수자금_런웨이(Y/N), 가용자금_런웨이(Y/N), 재무제표_런웨이(Y/N)
+// 한도약정계좌 한도:
+//   - 농협 계좌: 각 7.5억 (은행NO에서 자동 판단)
+//   - 기업은행 한도약정: 9억 별도 (계좌 마스터에 없는 별도 항목, 아래 CONFIG에 표시만)
+const SEPARATE_CREDIT_LINES = [
+  { name: '기업은행 한도약정', entity: '식스티헤르츠', limit: 900_000_000 },
+];
+
+function getCreditLimit(number, accountType) {
+  if (accountType !== '한도약정계좌') return 0;
+  if (/농협/.test(number)) return 750_000_000;
+  return 0;
+}
+
+function parseAccountsFile(headers, rows) {
+  return rows.map((r, i) => {
+    const number = String(r['은행NO'] ?? '').trim();
+    const accountType = r['계좌구분'] || '';
+    return {
+      id: `acc_${i}`,
+      _raw: r,
+      _headers: headers,
+      entity: r['법인명'] || '',
+      accountType,
+      fundType: r['자금구분'] || '',
+      number,
+      openingBalance: parseNumber(r['기초금액']),
+      // 런웨이 플래그: CSV 원본(Y/N 없이) 또는 (Y/N) 붙은 변형 둘 다 허용
+      isPure: isYes(r['순수자금_런웨이(Y/N)'] ?? r['순수자금_런웨이'] ?? r['순수자금런웨이']),
+      isAvailable: isYes(r['가용자금_런웨이(Y/N)'] ?? r['가용자금_런웨이'] ?? r['가용자금런웨이']),
+      isFinancial: isYes(r['재무제표_런웨이(Y/N)'] ?? r['재무제표_런웨이'] ?? r['재무제표런웨이']),
+      limit: getCreditLimit(number, accountType),
+    };
+  }).filter(a => a.entity && a.number);
+}
+
+// Actuals: 법인명, 거래일, 거래처명, 내용, 분류, 계정과목, 입금, 출금, 거래통장(은행NO)
+function parseActualsFile(headers, rows) {
+  return rows.map((r, i) => {
+    const inAmt = parseNumber(r['입금']);
+    const outAmt = parseNumber(r['출금']);
+    const amount = inAmt - outAmt;
+    return {
+      id: `tx_${i}`,
+      _raw: r,
+      _headers: headers,
+      entity: r['법인명'] || '',
+      date: normalizeDate(r['거래일']),
+      counterpart: r['거래처명'] || '',
+      description: r['내용'] || '',
+      category: r['분류'] || '',
+      account: r['계정과목'] || '',
+      inflow: inAmt,
+      outflow: outAmt,
+      amount,
+      // 거래통장 컬럼: 여러 변형 허용
+      accountNumber: String(r['거래통장(은행NO)'] ?? r['거래통장'] ?? r['은행NO'] ?? '').trim(),
+    };
+  }).filter(t => t.entity && t.date);
+}
+
+// Plans: 법인명, 계획구분, 주체구분, 해당월, 거래처명, 계정과목, 내용, 입금액, 출금액
+function parsePlansFile(headers, rows) {
+  return rows.map((r, i) => {
+    const inAmt = parseNumber(r['입금액']);
+    const outAmt = parseNumber(r['출금액']);
+    const amount = inAmt - outAmt;
+    return {
+      id: `plan_${i}`,
+      _raw: r,
+      _headers: headers,
+      entity: r['법인명'] || '',
+      planType: r['계획구분'] || '',
+      subjectType: r['주체구분'] || '',
+      monthRaw: r['해당월'] || '',
+      month: normalizeMonthKey(r['해당월']),
+      counterpart: r['거래처명'] || '',
+      account: r['계정과목'] || '',
+      description: r['내용'] || '',
+      inflow: inAmt,
+      outflow: outAmt,
+      amount,
+    };
+  }).filter(p => p.entity && p.month);
+}
+
+// ============================================================================
+//  METRICS
+// ============================================================================
+function calcAccountBalance(account, transactions) {
+  const txs = transactions.filter(t => t.accountNumber === account.number);
+  return account.openingBalance + txs.reduce((s, t) => s + t.amount, 0);
+}
+
+function calcMetrics(data, entityFilter, planTypeChoice = '전체계획', actualizedMonths = new Set(), planYearFilter = '2026') {
+  const { accounts, transactions, plans } = data;
+  const filteredAccounts = entityFilter === 'all' ? accounts : accounts.filter(a => a.entity === entityFilter);
+  const accNums = new Set(filteredAccounts.map(a => a.number));
+  const filteredTxs = transactions.filter(t => accNums.has(t.accountNumber));
+  const filteredPlans = entityFilter === 'all' ? plans : plans.filter(p => p.entity === entityFilter);
+
+  // 계획 데이터에서 사용 가능한 연도 목록 추출
+  const planYears = [...new Set(plans.map(p => (p.month || '').slice(0, 4)))]
+    .filter(y => /^\d{4}$/.test(y)).sort();
+
+  // 체크된 월이 있으면 그 월들까지의 실적만 반영. 없으면 전체 실적 반영.
+  const useMonthFilter = actualizedMonths.size > 0;
+  const txsForBalance = useMonthFilter
+    ? transactions.filter(t => actualizedMonths.has(t.date.slice(0, 7)))
+    : transactions;
+
+  const balances = filteredAccounts.map(acc => {
+    const accTxs = txsForBalance.filter(t => t.accountNumber === acc.number);
+    const currentBalance = acc.openingBalance + accTxs.reduce((s, t) => s + t.amount, 0);
+    return {
+      ...acc,
+      // 저장된 데이터에 limit 필드가 없으면 재계산 (마이그레이션)
+      limit: acc.limit != null ? acc.limit : getCreditLimit(acc.number, acc.accountType),
+      currentBalance,
+      txSum: currentBalance - acc.openingBalance,
+      inflowSum: accTxs.reduce((s, t) => s + t.inflow, 0),
+      outflowSum: accTxs.reduce((s, t) => s + t.outflow, 0),
+    };
+  });
+
+  // 실적 반영 컷오프 라벨 (UI 표시용)
+  const sortedChecked = [...actualizedMonths].sort();
+  const cutoffLabel = useMonthFilter
+    ? (sortedChecked.length === 1
+        ? `${sortedChecked[0]} 실적 반영`
+        : `${sortedChecked[0]} ~ ${sortedChecked[sortedChecked.length - 1]} 실적 반영`)
+    : '전체 실적 반영';
+
+  // === 자금 합계 계산 ===
+  // 한도약정계좌: 잔액이 +면 순수자금+가용자금 합산, -면 가용자금에서 차감
+  // 그 외 계좌: Y/N 플래그 기반
+  let pureFunds = 0;
+  let availableFunds = 0;
+  balances.forEach(b => {
+    if (b.accountType === '한도약정계좌') {
+      if (b.currentBalance >= 0) {
+        pureFunds += b.currentBalance;
+        availableFunds += b.currentBalance;
+      } else {
+        availableFunds += b.currentBalance;
+      }
+    } else {
+      if (b.isPure) pureFunds += b.currentBalance;
+      if (b.isAvailable) availableFunds += b.currentBalance;
+    }
+  });
+  const financialFunds = balances.filter(b => b.isFinancial).reduce((s, b) => s + b.currentBalance, 0);
+
+  // === 기초 순수자금 (실적 반영 전, 기초금액 합계 기반 — 월별 시뮬레이션 시작값 용) ===
+  // 실적이 이미 반영된 pureFunds는 "현재잔액" 기준. 월별 차트에서 시작값으로 쓰면 이중 차감됨.
+  // 따라서 기초금액 기준으로 순수자금 산정하고, 체크 안된 월이 있으면 그 전까지는 실적 net 누적.
+  let pureFundsOpening = 0;
+  balances.forEach(b => {
+    if (b.accountType === '한도약정계좌') {
+      // 한도약정은 기초금액이 0이거나 +일 것 (한도 사용은 거래로 발생)
+      if (b.openingBalance >= 0) pureFundsOpening += b.openingBalance;
+    } else {
+      if (b.isPure) pureFundsOpening += b.openingBalance;
+    }
+  });
+
+  // 자금구분별 집계 (한도약정계좌 제외 — 아래 한도약정 카드에서 별도 표시)
+  const byFundType = {};
+  balances.forEach(b => {
+    if (b.accountType === '한도약정계좌') return; // 한도는 제외
+    const key = b.fundType || '(미분류)';
+    if (!byFundType[key]) byFundType[key] = { fundType: key, balance: 0, count: 0 };
+    byFundType[key].balance += b.currentBalance;
+    byFundType[key].count += 1;
+  });
+  // 순서 고정: 순수자금 → 가용자금 → R&D자금 → (미분류)
+  const FUND_TYPE_ORDER = ['순수자금', '가용자금', 'R&D자금', '(미분류)'];
+  const fundTypeList = Object.values(byFundType).sort((a, b) =>
+    FUND_TYPE_ORDER.indexOf(a.fundType) - FUND_TYPE_ORDER.indexOf(b.fundType));
+
+  // === 한도약정계좌 사용량 ===
+  // 한도약정은 식스티헤르츠만 소유 — 다른 법인 선택 시에는 표시/계산 안함
+  const creditAccounts = balances.filter(b => b.accountType === '한도약정계좌');
+  // 별도 한도약정 (파일에 없는 항목) - 선택된 법인 기준으로 스코프
+  const separateCredits = SEPARATE_CREDIT_LINES.filter(s =>
+    entityFilter === 'all' || s.entity === entityFilter
+  );
+  const fileCreditLimitSum = creditAccounts.reduce((s, b) => s + (b.limit || 0), 0);
+  const separateCreditLimitSum = separateCredits.reduce((s, c) => s + c.limit, 0);
+  const creditLimitSum = fileCreditLimitSum + separateCreditLimitSum;
+  const creditUsedSum = creditAccounts.filter(c => c.currentBalance < 0).reduce((s, c) => s + Math.abs(c.currentBalance), 0);
+  const creditUsageRate = creditLimitSum > 0 ? (creditUsedSum / creditLimitSum) * 100 : 0;
+  const creditDetail = creditAccounts.map(c => {
+    const used = c.currentBalance < 0 ? Math.abs(c.currentBalance) : 0;
+    const usage = c.limit > 0 ? (used / c.limit) * 100 : 0;
+    const remaining = Math.max(0, (c.limit || 0) - used); // 잔여한도
+    return { ...c, used, usage, remaining };
+  });
+
+  // === 실적 월별 집계 ===
+  const actualMonthly = {};
+  filteredTxs.forEach(t => {
+    const k = t.date.slice(0, 7);
+    if (!actualMonthly[k]) actualMonthly[k] = { month: k, inflow: 0, outflow: 0, net: 0 };
+    actualMonthly[k].inflow += t.inflow;
+    actualMonthly[k].outflow += t.outflow;
+    actualMonthly[k].net += t.amount;
+  });
+
+  // === 실적 월별 (재무제표용, 한도약정계좌 거래 제외) ===
+  // 재무제표 기준 넷번: 한도약정 거래는 "자금 이동"이지 실제 비용/수익이 아님
+  const creditAccountNumbers = new Set(
+    balances.filter(b => b.accountType === '한도약정계좌').map(b => b.number)
+  );
+  const actualMonthlyFinancial = {};
+  filteredTxs.forEach(t => {
+    if (creditAccountNumbers.has(t.accountNumber)) return; // 한도약정 입출금 제외
+    const k = t.date.slice(0, 7);
+    if (!actualMonthlyFinancial[k]) actualMonthlyFinancial[k] = { month: k, inflow: 0, outflow: 0, net: 0 };
+    actualMonthlyFinancial[k].inflow += t.inflow;
+    actualMonthlyFinancial[k].outflow += t.outflow;
+    actualMonthlyFinancial[k].net += t.amount;
+  });
+
+  // === 계획 월별 집계 (planTypeChoice 적용, 식스티만 확정계획 선택 가능) ===
+  const planRelevant = filteredPlans.filter(p => {
+    if (p.entity === '식스티헤르츠') return p.planType === planTypeChoice;
+    return p.planType === '전체계획';
+  });
+  const planMonthly = {};
+  planRelevant.forEach(p => {
+    if (!p.month) return;
+    if (!planMonthly[p.month]) planMonthly[p.month] = { month: p.month, inflow: 0, outflow: 0, net: 0 };
+    planMonthly[p.month].inflow += p.inflow;
+    planMonthly[p.month].outflow += p.outflow;
+    planMonthly[p.month].net += p.amount;
+  });
+
+  // === 통합 월별 뷰 (실적 + 계획) ===
+  // 각 월: actualizedMonths에 있으면 실적 데이터, 아니면 계획 데이터
+  const allMonthsSet = new Set([...Object.keys(actualMonthly), ...Object.keys(planMonthly)]);
+  const allMonths = [...allMonthsSet].sort();
+  const mergedMonthlyBase = allMonths.map(month => {
+    const hasActual = !!actualMonthly[month];
+    const hasPlan = !!planMonthly[month];
+    const userChecked = actualizedMonths.has(month);
+    const isActualized = userChecked;
+    const source = isActualized ? '실적' : '계획';
+    const row = isActualized ? (actualMonthly[month] || { inflow: 0, outflow: 0, net: 0 })
+                             : (planMonthly[month] || { inflow: 0, outflow: 0, net: 0 });
+    return {
+      month,
+      source,
+      isActualized,
+      hasActual, hasPlan,
+      inflow: row.inflow || 0,
+      outflow: row.outflow || 0,
+      net: row.net || 0,
+      actualInflow: actualMonthly[month]?.inflow || 0,
+      actualOutflow: actualMonthly[month]?.outflow || 0,
+      actualNet: actualMonthly[month]?.net || 0,
+      planInflow: planMonthly[month]?.inflow || 0,
+      planOutflow: planMonthly[month]?.outflow || 0,
+      planNet: planMonthly[month]?.net || 0,
+    };
+  });
+
+  // 월별 누적 잔액 추가 (기초 순수자금부터 시작)
+  let runningBalance = pureFundsOpening;
+  const mergedMonthly = [
+    // 기초 행 (첫 번째)
+    {
+      month: '기초', source: '기초', isActualized: false, isOpening: true,
+      hasActual: false, hasPlan: false,
+      inflow: 0, outflow: 0, net: 0,
+      actualInflow: 0, actualOutflow: 0, actualNet: 0,
+      planInflow: 0, planOutflow: 0, planNet: 0,
+      cumulativeBalance: pureFundsOpening,
+    },
+    ...mergedMonthlyBase.map(row => {
+      runningBalance += row.net;
+      return { ...row, cumulativeBalance: runningBalance };
+    }),
+  ];
+
+  // 누적 자금 변동 (실적 기준, 차트용)
+  // monthlySeries는 아래에서 정의되므로 누적도 그곳 근처에서 계산
+
+  // === 자금 구성 분해 (라벨 표시용) ===
+  // R&D 자금: 자금구분 === 'R&D자금' 계좌 합계
+  const rdFunds = balances.filter(b => b.fundType === 'R&D자금').reduce((s, b) => s + b.currentBalance, 0);
+  // 한도약정 잔액 합계 (양수=보통예금, 음수=사용중)
+  const creditBalanceSum = balances.filter(b => b.accountType === '한도약정계좌').reduce((s, b) => s + b.currentBalance, 0);
+
+  // === 가용자금 (표시용): 순수자금 + 한도약정 잔액 + 총 한도 = 실제 쓸 수 있는 총액 ===
+  // 기존 availableFunds(Y플래그)에 총 한도를 더한 값과 동일
+  const availableForRunway = availableFunds + creditLimitSum;
+
+  // === 3가지 기준 Burn & Runway 계산 헬퍼 ===
+  // monthlyRows: 일반(순수/가용) 넷번 계산용
+  // financialMonthlyRows: 재무제표 넷번 계산용 (한도약정 입출금 제외)
+  const computeRunway = (monthlyRows, financialMonthlyRows) => {
+    const valid = monthlyRows.filter(m => m && (m.hasActual || m.hasPlan || m.net != null));
+    const avgNet = valid.length ? valid.reduce((s, m) => s + (m.net || 0), 0) / valid.length : 0;
+    const burn = avgNet < 0 ? -avgNet : 0;
+
+    // 재무제표 전용 넷번 (fallback: monthlyRows 동일)
+    const finRows = (financialMonthlyRows || monthlyRows).filter(m => m && (m.hasActual || m.hasPlan || m.net != null));
+    const finAvgNet = finRows.length ? finRows.reduce((s, m) => s + (m.net || 0), 0) / finRows.length : 0;
+    const financialBurn = finAvgNet < 0 ? -finAvgNet : 0;
+
+    return {
+      burn,
+      financialBurn,
+      monthCount: valid.length,
+      financialMonthCount: finRows.length,
+      pureRunway: burn > 0 ? pureFunds / burn : Infinity,
+      availableRunway: burn > 0 ? availableForRunway / burn : Infinity,
+      financialRunway: financialBurn > 0 ? financialFunds / financialBurn : Infinity,
+    };
+  };
+
+  // 실적 기준 월별 series (차트용)
+  const monthlySeries = Object.values(actualMonthly).sort((a, b) => a.month.localeCompare(b.month));
+  const monthlySeriesFinancial = Object.values(actualMonthlyFinancial).sort((a, b) => a.month.localeCompare(b.month));
+
+  // 누적 자금 변동 (실적 기준) - 기초 순수자금부터 시작
+  let cum = pureFundsOpening;
+  const cumulativeSeries = [
+    // 맨 앞에 "기초" 행 추가
+    { month: '기초', net: 0, cumulative: pureFundsOpening, isOpening: true },
+    ...monthlySeries.map(m => {
+      cum += m.net;
+      return { month: m.month, net: m.net, cumulative: cum };
+    }),
+  ];
+
+  // 1) 실적 기준: 체크된 월만 (또는 체크 없으면 모든 실적 월)
+  const actualBurnRows = useMonthFilter
+    ? monthlySeries.filter(m => actualizedMonths.has(m.month))
+    : monthlySeries;
+  const actualBurnRowsFinancial = useMonthFilter
+    ? monthlySeriesFinancial.filter(m => actualizedMonths.has(m.month))
+    : monthlySeriesFinancial;
+  const actualBurnResult = computeRunway(actualBurnRows, actualBurnRowsFinancial);
+
+  // === 계획 기준 런웨이 월별 데이터 빌더 ===
+  // 체크된 월 = 실적, 나머지 = 계획 (planType에 따라 전체/확정)
+  // 연도 필터 적용
+  // useFinancialActual: 재무제표 전용 여부 (실적월에서 한도약정 거래 제외)
+  const buildMergedRunwayRows = (planMonthsAgg, useFinancialActual = false) => {
+    const actualSource = useFinancialActual ? actualMonthlyFinancial : actualMonthly;
+    const relevantMonths = new Set();
+    Object.keys(planMonthsAgg).forEach(m => relevantMonths.add(m));
+    Object.keys(actualSource).forEach(m => {
+      if (planYearFilter === 'all' || m.startsWith(planYearFilter)) relevantMonths.add(m);
+    });
+    return [...relevantMonths].sort().map(month => {
+      const userChecked = actualizedMonths.has(month);
+      const actualData = actualSource[month];
+      const planData = planMonthsAgg[month];
+      if (userChecked && actualData) return { month, net: actualData.net, inflow: actualData.inflow, outflow: actualData.outflow, source: '실적', hasActual: true };
+      if (planData) return { month, net: planData.net, inflow: planData.inflow, outflow: planData.outflow, source: '계획', hasPlan: true };
+      if (actualData) return { month, net: actualData.net, inflow: actualData.inflow, outflow: actualData.outflow, source: '실적', hasActual: true };
+      return null;
+    }).filter(Boolean);
+  };
+
+  // 2) 전체계획 기준 넷번/런웨이 (연도 필터 + 실적+계획 병합)
+  const allPlanRelevant = filteredPlans.filter(p => {
+    if (p.planType !== '전체계획') return false;
+    if (planYearFilter !== 'all' && !(p.month || '').startsWith(planYearFilter)) return false;
+    return true;
+  });
+  const allPlanMonthlyAgg = {};
+  allPlanRelevant.forEach(p => {
+    if (!p.month) return;
+    if (!allPlanMonthlyAgg[p.month]) allPlanMonthlyAgg[p.month] = { month: p.month, inflow: 0, outflow: 0, net: 0, hasPlan: true };
+    allPlanMonthlyAgg[p.month].inflow += p.inflow;
+    allPlanMonthlyAgg[p.month].outflow += p.outflow;
+    allPlanMonthlyAgg[p.month].net += p.amount;
+  });
+  const allPlanMergedRows = buildMergedRunwayRows(allPlanMonthlyAgg, false);
+  const allPlanMergedRowsFinancial = buildMergedRunwayRows(allPlanMonthlyAgg, true);
+  const allPlanBurnResult = computeRunway(allPlanMergedRows, allPlanMergedRowsFinancial);
+
+  // 3) 확정계획 기준 넷번/런웨이 (식스티만 · 연도 필터 + 실적+계획 병합)
+  const confirmedPlanRelevant = filteredPlans.filter(p => {
+    if (p.planType !== '확정계획') return false;
+    if (p.entity !== '식스티헤르츠') return false;
+    if (planYearFilter !== 'all' && !(p.month || '').startsWith(planYearFilter)) return false;
+    return true;
+  });
+  const confirmedPlanMonthlyAgg = {};
+  confirmedPlanRelevant.forEach(p => {
+    if (!p.month) return;
+    if (!confirmedPlanMonthlyAgg[p.month]) confirmedPlanMonthlyAgg[p.month] = { month: p.month, inflow: 0, outflow: 0, net: 0, hasPlan: true };
+    confirmedPlanMonthlyAgg[p.month].inflow += p.inflow;
+    confirmedPlanMonthlyAgg[p.month].outflow += p.outflow;
+    confirmedPlanMonthlyAgg[p.month].net += p.amount;
+  });
+  const confirmedPlanMergedRows = buildMergedRunwayRows(confirmedPlanMonthlyAgg, false);
+  const confirmedPlanMergedRowsFinancial = buildMergedRunwayRows(confirmedPlanMonthlyAgg, true);
+  const confirmedPlanBurnResult = computeRunway(confirmedPlanMergedRows, confirmedPlanMergedRowsFinancial);
+  // 식스티 외 법인을 선택했고 그 법인에 확정계획 없으면 숨김
+  const confirmedPlanAvailable = Object.keys(confirmedPlanMonthlyAgg).length > 0;
+
+  // === 월별 누적 잔액 시리즈 (계획 런웨이 섹션용, 시작값 = 현재 순수자금) ===
+  // 각 월마다: inflow / outflow / net / 누적 잔액 (시작: 현재 순수자금)
+  const buildBalanceSeries = (mergedRows, startBalance) => {
+    let running = startBalance;
+    return mergedRows.map(row => {
+      const prevBalance = running;
+      running += row.net;
+      return {
+        month: row.month,
+        source: row.source,
+        inflow: row.inflow || 0,
+        outflow: row.outflow || 0,
+        net: row.net || 0,
+        startBalance: prevBalance,
+        endBalance: running,
+      };
+    });
+  };
+  const allPlanBalanceSeries = buildBalanceSeries(allPlanMergedRows, pureFundsOpening);
+  const confirmedPlanBalanceSeries = buildBalanceSeries(confirmedPlanMergedRows, pureFundsOpening);
+  // 첫 번째 (-) 진입 월 찾기
+  const findNegativeMonth = (series) => series.find(r => r.endBalance < 0)?.month || null;
+  const allPlanNegativeMonth = findNegativeMonth(allPlanBalanceSeries);
+  const confirmedPlanNegativeMonth = findNegativeMonth(confirmedPlanBalanceSeries);
+
+  // 메인에 쓸 넷번/런웨이 = 실적 기준
+  const netBurn = actualBurnResult.burn;
+  const pureRunway = actualBurnResult.pureRunway;
+  const availableRunway = actualBurnResult.availableRunway;
+  const financialRunway = actualBurnResult.financialRunway;
+
+  // 법인별 순수자금
+  const entities = [...new Set(accounts.map(a => a.entity))].filter(Boolean);
+  const byEntity = entities.map(entName => {
+    const accs = balances.filter(b => b.entity === entName);
+    let pure = 0, avail = 0;
+    accs.forEach(b => {
+      if (b.accountType === '한도약정계좌') {
+        if (b.currentBalance >= 0) { pure += b.currentBalance; avail += b.currentBalance; }
+        else { avail += b.currentBalance; }
+      } else {
+        if (b.isPure) pure += b.currentBalance;
+        if (b.isAvailable) avail += b.currentBalance;
+      }
+    });
+    return { name: entName, pureFunds: pure, availableFunds: avail, accountCount: accs.length };
+  }).filter(e => e.accountCount > 0).sort((a, b) => b.pureFunds - a.pureFunds);
+
+  // === 주요 지출 분류 (자금이동 제외) ===
+  const expenseTotals = {};
+  filteredTxs.forEach(t => {
+    if (t.outflow <= 0) return;
+    const cat = t.category || '(미분류)';
+    if (cat === '자금이동') return;
+    expenseTotals[cat] = (expenseTotals[cat] || 0) + t.outflow;
+  });
+  const topExpenseCategories = Object.entries(expenseTotals).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
+
+  // === 주요 입금 분류 (자금이동 제외) ===
+  const incomeTotals = {};
+  filteredTxs.forEach(t => {
+    if (t.inflow <= 0) return;
+    const cat = t.category || '(미분류)';
+    if (cat === '자금이동') return;
+    incomeTotals[cat] = (incomeTotals[cat] || 0) + t.inflow;
+  });
+  const topIncomeCategories = Object.entries(incomeTotals).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
+
+  // 계획 토글 가능 여부
+  const planToggleAvailable = entityFilter === 'all' || entityFilter === '식스티헤르츠';
+
+  return {
+    filteredAccounts: balances, filteredTransactions: filteredTxs, filteredPlans,
+    pureFunds, availableFunds, financialFunds, availableForRunway,
+    pureFundsOpening,
+    rdFunds, creditBalanceSum,
+    fundTypeList,
+    creditAccounts: creditDetail, separateCredits,
+    creditLimitSum, fileCreditLimitSum, separateCreditLimitSum, creditUsedSum, creditUsageRate,
+    monthlySeries, cumulativeSeries, mergedMonthly, allMonths,
+    // 실적 기준 (메인)
+    netBurn, pureRunway, availableRunway, financialRunway,
+    actualBurnResult, allPlanBurnResult, confirmedPlanBurnResult,
+    confirmedPlanAvailable,
+    // 월별 누적 잔액 차트용
+    allPlanBalanceSeries, confirmedPlanBalanceSeries,
+    allPlanNegativeMonth, confirmedPlanNegativeMonth,
+    planTypeChoice, planToggleAvailable,
+    planYears, planYearFilter,
+    byEntity, topExpenseCategories, topIncomeCategories,
+    allEntities: entities,
+    burnBaseMonthCount: actualBurnResult.monthCount,
+    cutoffLabel, useMonthFilter,
+  };
+}
+
+// ============================================================================
+//  UI PRIMITIVES
+// ============================================================================
+function Card({ children, className = '', style = {} }) {
+  return <div className={`rounded-2xl ${className}`} style={{ background: COLOR.surface, border: `1px solid ${COLOR.border}`, boxShadow: '0 1px 3px rgba(26, 37, 68, 0.04), 0 1px 2px rgba(26, 37, 68, 0.06)', ...style }}>{children}</div>;
+}
+function KPICard({ label, value, subValue, icon: Icon, accent }) {
+  return (
+    <Card className="p-5">
+      <div className="flex items-start justify-between mb-3">
+        <div className="text-xs tracking-wider uppercase font-medium" style={{ color: COLOR.textMute, letterSpacing: '0.12em' }}>{label}</div>
+        {Icon && <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${accent || COLOR.gold}15`, color: accent || COLOR.gold }}><Icon size={16} /></div>}
+      </div>
+      <div className="text-3xl font-semibold tabular-nums tracking-tight" style={{ color: COLOR.text, fontFamily: 'var(--mono)' }}>{value}</div>
+      {subValue && <div className="mt-1.5 text-xs" style={{ color: COLOR.textDim }}>{subValue}</div>}
+    </Card>
+  );
+}
+function Badge({ children, color = COLOR.textDim, bg }) {
+  return <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium tracking-wide"
+               style={{ color, background: bg || `${color}15`, letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>{children}</span>;
+}
+function TabButton({ active, onClick, icon: Icon, children }) {
+  return <button onClick={onClick} className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all"
+                 style={{ background: active ? COLOR.gold : 'transparent', color: active ? '#fff' : COLOR.textDim, border: `1px solid ${active ? COLOR.gold : 'transparent'}` }}>
+    <Icon size={15} />{children}</button>;
+}
+const chartAxis = () => ({
+  stroke: COLOR.textMute, tick: { fill: COLOR.textDim, fontSize: 11, fontFamily: 'var(--mono)' },
+  axisLine: { stroke: COLOR.border }, tickLine: { stroke: COLOR.border },
+});
+function ChartTooltip({ active, payload, label, formatter }) {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div className="px-3 py-2 rounded-lg text-xs" style={{ background: COLOR.surface, border: `1px solid ${COLOR.borderHi}`, boxShadow: '0 4px 20px rgba(26, 37, 68, 0.12)' }}>
+      <div className="mb-1 font-semibold" style={{ color: COLOR.text }}>{label}</div>
+      {payload.map((p, i) => (
+        <div key={i} className="flex items-center justify-between gap-4" style={{ color: p.color }}>
+          <span>{p.name}</span>
+          <span style={{ fontFamily: 'var(--mono)', color: COLOR.text, fontWeight: 500 }}>{formatter ? formatter(p.value) : p.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+function TextInput({ value, onChange, placeholder, icon: Icon, width = 180 }) {
+  return (
+    <div style={{ position: 'relative' }}>
+      {Icon && <Icon size={14} style={{ color: COLOR.textMute, position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />}
+      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+             className={`${Icon ? 'pl-8' : 'pl-3'} pr-3 py-1.5 text-xs rounded-lg`}
+             style={{ background: COLOR.surface, border: `1px solid ${COLOR.border}`, color: COLOR.text, width, fontFamily: 'inherit' }} />
+    </div>
+  );
+}
+function Select({ value, onChange, options, width = 140 }) {
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)} className="px-3 py-1.5 text-xs rounded-lg"
+            style={{ background: COLOR.surface, border: `1px solid ${COLOR.border}`, color: COLOR.text, width, cursor: 'pointer' }}>
+      {options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+    </select>
+  );
+}
+function DateInput({ value, onChange }) {
+  return (
+    <input type="date" value={value} onChange={e => onChange(e.target.value)} className="px-2 py-1.5 text-xs rounded-lg"
+           style={{ background: COLOR.surface, border: `1px solid ${COLOR.border}`, color: COLOR.text, width: 140, fontFamily: 'var(--mono)' }} />
+  );
+}
+function DownloadButton({ onClick, label = 'CSV 다운로드' }) {
+  return (
+    <button onClick={onClick} className="px-3 py-1.5 text-xs rounded-lg flex items-center gap-1.5"
+            style={{ background: COLOR.surface, border: `1px solid ${COLOR.border}`, color: COLOR.text }}>
+      <Download size={12} />{label}
+    </button>
+  );
+}
+function ResetFiltersButton({ onClick }) {
+  return (
+    <button onClick={onClick} className="px-2.5 py-1.5 text-xs rounded-lg flex items-center gap-1"
+            style={{ background: 'transparent', border: `1px solid ${COLOR.border}`, color: COLOR.textMute }}>
+      <X size={11} />초기화
+    </button>
+  );
+}
+
+// ============================================================================
+//  RAW TABLE — displays uploaded columns as-is + optional extra computed columns
+// ============================================================================
+function RawTable({ headers, rows, extraColumns = [], maxHeight = 560, colSpan }) {
+  const totalCols = headers.length + extraColumns.length;
+  return (
+    <div className="overflow-x-auto" style={{ maxHeight, overflowY: 'auto' }}>
+      <table className="w-full text-sm">
+        <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: COLOR.surfaceEl }}>
+          <tr>
+            {headers.map(h => (
+              <th key={h} className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap"
+                  style={{ color: COLOR.textMute, letterSpacing: '0.04em' }}>{h}</th>
+            ))}
+            {extraColumns.map(c => (
+              <th key={c.key} className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap"
+                  style={{ color: COLOR.gold, letterSpacing: '0.04em' }}>{c.header} ✦</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={row.id || i} style={{ borderTop: `1px solid ${COLOR.border}` }}>
+              {headers.map(h => {
+                const v = row._raw?.[h] ?? '';
+                const numeric = looksNumeric(v);
+                const displayValue = numeric ? formatTableNumber(v) : v;
+                return (
+                  <td key={h}
+                      className={`px-3 py-2.5 ${numeric ? 'whitespace-nowrap text-right tabular-nums' : ''}`}
+                      style={{ color: COLOR.text, fontFamily: numeric ? 'var(--mono)' : 'inherit', fontSize: numeric ? '12px' : '13px' }}>
+                    {displayValue}
+                  </td>
+                );
+              })}
+              {extraColumns.map(c => (
+                <td key={c.key} className="px-3 py-2.5"
+                    style={{ color: c.color?.(row) || COLOR.gold, fontFamily: 'var(--mono)', fontSize: '12px', whiteSpace: 'nowrap', textAlign: c.align || 'right' }}>
+                  {c.render(row)}
+                </td>
+              ))}
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr><td colSpan={colSpan || totalCols || 1} className="px-4 py-8 text-center" style={{ color: COLOR.textMute }}>데이터가 없습니다.</td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ============================================================================
+//  MONTHLY BALANCE TABLE (월별 입출금 + 누적 잔액 시뮬레이션, 표 형식)
+// ============================================================================
+function MonthlyBalanceChart({ series, negativeMonth, accentColor, titleLabel }) {
+  if (!series || series.length === 0) {
+    return (
+      <div className="text-xs px-3 py-4 text-center rounded-lg" style={{ color: COLOR.textMute, background: COLOR.surfaceEl, border: `1px dashed ${COLOR.border}` }}>
+        표시할 월별 데이터가 없습니다.
+      </div>
+    );
+  }
+
+  const startBalance = series[0]?.startBalance || 0;
+  const endBalance = series[series.length - 1]?.endBalance || 0;
+  const totalInflow = series.reduce((s, r) => s + r.inflow, 0);
+  const totalOutflow = series.reduce((s, r) => s + r.outflow, 0);
+
+  return (
+    <div className="rounded-xl overflow-hidden" style={{ background: COLOR.surface, border: `1px solid ${COLOR.border}` }}>
+      <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2" style={{ borderBottom: `1px solid ${COLOR.border}` }}>
+        <div>
+          <div className="text-xs font-medium" style={{ color: COLOR.text }}>{titleLabel}</div>
+          <div className="text-[11px] mt-0.5" style={{ color: COLOR.textMute }}>
+            기초 {formatCompactKRW(startBalance)} + 입금 {formatCompactKRW(totalInflow)} − 출금 {formatCompactKRW(totalOutflow)} = 기말 {formatCompactKRW(endBalance)}
+          </div>
+        </div>
+        {negativeMonth ? (
+          <div className="text-[11px] px-2.5 py-1 rounded-md flex items-center gap-1.5"
+               style={{ color: COLOR.danger, background: `${COLOR.danger}10`, border: `1px solid ${COLOR.danger}35` }}>
+            <AlertCircle size={11} />
+            <span>잔액 (-) 진입: <b style={{ fontFamily: 'var(--mono)' }}>{negativeMonth}</b></span>
+          </div>
+        ) : (
+          <div className="text-[11px] px-2.5 py-1 rounded-md flex items-center gap-1.5"
+               style={{ color: COLOR.success, background: `${COLOR.success}10`, border: `1px solid ${COLOR.success}35` }}>
+            <CheckCircle2 size={11} />
+            <span>전체 기간 잔액 (+) 유지</span>
+          </div>
+        )}
+      </div>
+
+      <div className="overflow-x-auto" style={{ maxHeight: 420, overflowY: 'auto' }}>
+        <table className="w-full text-xs">
+          <thead style={{ position: 'sticky', top: 0, background: COLOR.surfaceEl, zIndex: 1 }}>
+            <tr>
+              <th className="px-3 py-2.5 text-left" style={{ color: COLOR.textMute, fontWeight: 500, borderBottom: `1px solid ${COLOR.border}` }}>월</th>
+              <th className="px-3 py-2.5 text-left" style={{ color: COLOR.textMute, fontWeight: 500, borderBottom: `1px solid ${COLOR.border}` }}>구분</th>
+              <th className="px-3 py-2.5 text-right" style={{ color: COLOR.textMute, fontWeight: 500, borderBottom: `1px solid ${COLOR.border}` }}>입금계</th>
+              <th className="px-3 py-2.5 text-right" style={{ color: COLOR.textMute, fontWeight: 500, borderBottom: `1px solid ${COLOR.border}` }}>출금계</th>
+              <th className="px-3 py-2.5 text-right" style={{ color: COLOR.textMute, fontWeight: 500, borderBottom: `1px solid ${COLOR.border}` }}>순증감</th>
+              <th className="px-3 py-2.5 text-right" style={{ color: COLOR.textMute, fontWeight: 500, borderBottom: `1px solid ${COLOR.border}` }}>월말 잔액</th>
+            </tr>
+          </thead>
+          <tbody>
+            {/* 기초 행 */}
+            <tr style={{ background: COLOR.bg }}>
+              <td className="px-3 py-2" style={{ color: COLOR.textDim, fontFamily: 'var(--mono)', fontStyle: 'italic' }}>기초</td>
+              <td className="px-3 py-2" style={{ color: COLOR.textMute, fontSize: 10 }}>시작값</td>
+              <td className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>—</td>
+              <td className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>—</td>
+              <td className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>—</td>
+              <td className="px-3 py-2 text-right tabular-nums font-semibold"
+                  style={{ fontFamily: 'var(--mono)', color: startBalance >= 0 ? COLOR.text : COLOR.danger }}>
+                {formatCompactKRW(startBalance)}
+              </td>
+            </tr>
+            {series.map((r, i) => {
+              const isNeg = r.endBalance < 0;
+              const isFirstNeg = negativeMonth && r.month === negativeMonth;
+              return (
+                <tr key={i} style={{
+                  borderTop: `1px solid ${COLOR.border}`,
+                  background: isFirstNeg ? `${COLOR.danger}14` : (isNeg ? `${COLOR.danger}08` : 'transparent'),
+                }}>
+                  <td className="px-3 py-2 font-medium" style={{ color: COLOR.text, fontFamily: 'var(--mono)' }}>
+                    {r.month}
+                    {isFirstNeg && <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded" style={{ color: COLOR.danger, background: `${COLOR.danger}20` }}>(-) 시작</span>}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className="text-[10px] px-1.5 py-0.5 rounded"
+                          style={{
+                            color: r.source === '실적' ? COLOR.success : COLOR.info,
+                            background: r.source === '실적' ? `${COLOR.success}15` : `${COLOR.info}15`,
+                          }}>{r.source}</span>
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums" style={{ fontFamily: 'var(--mono)', color: r.inflow > 0 ? COLOR.success : COLOR.textMute }}>
+                    {r.inflow > 0 ? formatCompactKRW(r.inflow) : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums" style={{ fontFamily: 'var(--mono)', color: r.outflow > 0 ? COLOR.danger : COLOR.textMute }}>
+                    {r.outflow > 0 ? formatCompactKRW(r.outflow) : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums font-medium"
+                      style={{ fontFamily: 'var(--mono)', color: r.net >= 0 ? COLOR.success : COLOR.danger }}>
+                    {formatCompactKRW(r.net)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold"
+                      style={{ fontFamily: 'var(--mono)', color: isNeg ? COLOR.danger : COLOR.text }}>
+                    {formatCompactKRW(r.endBalance)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot style={{ background: COLOR.surfaceEl }}>
+            <tr>
+              <td className="px-3 py-2.5 font-semibold" style={{ color: COLOR.text, borderTop: `2px solid ${COLOR.border}` }}>합계</td>
+              <td className="px-3 py-2.5" style={{ borderTop: `2px solid ${COLOR.border}` }}></td>
+              <td className="px-3 py-2.5 text-right tabular-nums font-semibold" style={{ fontFamily: 'var(--mono)', color: COLOR.success, borderTop: `2px solid ${COLOR.border}` }}>
+                {formatCompactKRW(totalInflow)}
+              </td>
+              <td className="px-3 py-2.5 text-right tabular-nums font-semibold" style={{ fontFamily: 'var(--mono)', color: COLOR.danger, borderTop: `2px solid ${COLOR.border}` }}>
+                {formatCompactKRW(totalOutflow)}
+              </td>
+              <td className="px-3 py-2.5 text-right tabular-nums font-semibold" style={{ fontFamily: 'var(--mono)', color: (totalInflow - totalOutflow) >= 0 ? COLOR.success : COLOR.danger, borderTop: `2px solid ${COLOR.border}` }}>
+                {formatCompactKRW(totalInflow - totalOutflow)}
+              </td>
+              <td className="px-3 py-2.5 text-right tabular-nums font-semibold" style={{ fontFamily: 'var(--mono)', color: endBalance >= 0 ? accentColor : COLOR.danger, borderTop: `2px solid ${COLOR.border}` }}>
+                {formatCompactKRW(endBalance)}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+//  DASHBOARD
+// ============================================================================
+function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFilter, setPlanYearFilter, actualizedMonths, setActualizedMonths }) {
+  const { pureFunds, availableFunds, financialFunds, availableForRunway, fundTypeList,
+          pureFundsOpening,
+          rdFunds, creditBalanceSum,
+          netBurn, pureRunway, availableRunway, financialRunway,
+          actualBurnResult, allPlanBurnResult, confirmedPlanBurnResult, confirmedPlanAvailable,
+          allPlanBalanceSeries, confirmedPlanBalanceSeries,
+          allPlanNegativeMonth, confirmedPlanNegativeMonth,
+          creditAccounts, separateCredits, creditLimitSum, creditUsedSum, creditUsageRate,
+          monthlySeries, cumulativeSeries, mergedMonthly,
+          byEntity, topExpenseCategories, topIncomeCategories,
+          planToggleAvailable, burnBaseMonthCount,
+          planYears,
+          cutoffLabel, useMonthFilter } = metrics;
+
+  const fmtRunway = (n) => !isFinite(n) ? '∞' : n > 99 ? '99+' : n.toFixed(1);
+  const runwayAccent = (n) => !isFinite(n) ? COLOR.success : n < 6 ? COLOR.danger : n < 12 ? COLOR.gold : COLOR.success;
+
+  // 체크박스 임시 상태 (저장 버튼 누를 때까지 반영 안됨)
+  const [draftActualized, setDraftActualized] = useState(() => new Set(actualizedMonths));
+  const [draftDirty, setDraftDirty] = useState(false);
+  useEffect(() => { setDraftActualized(new Set(actualizedMonths)); setDraftDirty(false); }, [actualizedMonths]);
+
+  const toggleDraft = (month) => {
+    const next = new Set(draftActualized);
+    if (next.has(month)) next.delete(month); else next.add(month);
+    setDraftActualized(next);
+    setDraftDirty(true);
+  };
+  const saveActualized = () => {
+    setActualizedMonths(new Set(draftActualized));
+    setDraftDirty(false);
+  };
+  const resetDraft = () => {
+    setDraftActualized(new Set(actualizedMonths));
+    setDraftDirty(false);
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* 자금 현황 컷오프 라벨 */}
+      <div className="flex items-center justify-between flex-wrap gap-2 px-1" style={{ color: COLOR.textMute }}>
+        <div className="text-xs flex items-center gap-2">
+          <CalendarIcon size={12} />
+          <span>자금 현황 기준:</span>
+          <b style={{ color: useMonthFilter ? COLOR.gold : COLOR.textDim, fontFamily: 'var(--mono)' }}>{cutoffLabel}</b>
+          {!useMonthFilter && <span className="text-[11px]" style={{ color: COLOR.textMute }}>(월별 체크박스로 컷오프 설정 가능)</span>}
+        </div>
+        <div className="text-[11px]">기초금액 + 체크된 월 입출금 실적 합산</div>
+      </div>
+
+      {/* ==================== 💎 자금 현황 + 실적 런웨이 (통합 프리미엄 카드) ==================== */}
+      <div className="rounded-2xl overflow-hidden relative"
+           style={{
+             background: `linear-gradient(135deg, ${COLOR.gold} 0%, ${COLOR.goldHi} 100%)`,
+             boxShadow: `0 10px 40px rgba(44, 77, 138, 0.22), 0 4px 12px rgba(44, 77, 138, 0.12)`,
+           }}>
+        {/* 장식용 배경 원 */}
+        <div style={{ position: 'absolute', top: -80, right: -80, width: 260, height: 260, borderRadius: '50%',
+                      background: 'rgba(255,255,255,0.08)', pointerEvents: 'none' }} />
+        <div style={{ position: 'absolute', bottom: -60, left: -60, width: 200, height: 200, borderRadius: '50%',
+                      background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
+
+        <div className="relative p-6">
+          {/* 섹션 타이틀 */}
+          <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center"
+                   style={{ background: 'rgba(255,255,255,0.18)', backdropFilter: 'blur(8px)' }}>
+                <Wallet size={20} style={{ color: '#fff' }} />
+              </div>
+              <div>
+                <div className="text-lg font-semibold" style={{ color: '#fff', letterSpacing: '-0.01em' }}>자금 현황 & 실적 런웨이</div>
+                <div className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.75)' }}>체크된 실적 월까지의 현재 포지션</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-4 flex-wrap text-xs" style={{ color: 'rgba(255,255,255,0.9)' }}>
+              <div className="flex flex-col items-end">
+                <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 10, letterSpacing: '0.08em' }}>실적 넷번</span>
+                <b style={{ fontFamily: 'var(--mono)', fontSize: 14 }}>{actualBurnResult.burn > 0 ? formatCompactKRW(actualBurnResult.burn) : '—'}</b>
+              </div>
+              <div className="flex flex-col items-end">
+                <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 10, letterSpacing: '0.08em' }}>재무제표 넷번</span>
+                <b style={{ fontFamily: 'var(--mono)', fontSize: 14 }}>{actualBurnResult.financialBurn > 0 ? formatCompactKRW(actualBurnResult.financialBurn) : '—'}</b>
+              </div>
+            </div>
+          </div>
+
+          {/* 3열 카드 - 자금 / 런웨이 쌍으로 표시 */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* 순수자금 */}
+            <div className="rounded-xl p-5"
+                 style={{ background: 'rgba(255,255,255,0.95)', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: COLOR.gold, letterSpacing: '0.12em' }}>순수자금</span>
+                <Wallet size={14} style={{ color: COLOR.gold }} />
+              </div>
+              <div className="text-3xl font-bold tabular-nums" style={{ color: COLOR.text, fontFamily: 'var(--mono)', letterSpacing: '-0.02em' }}>
+                {formatCompactKRW(pureFunds)}
+              </div>
+              <div className="text-[11px] mt-1" style={{ color: COLOR.textMute }}>{formatKRW(pureFunds)}</div>
+              <div className="mt-4 pt-3 flex items-end justify-between" style={{ borderTop: `1px solid ${COLOR.border}` }}>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider" style={{ color: COLOR.textMute, letterSpacing: '0.08em' }}>실적 런웨이</div>
+                  <div className="text-xl font-semibold tabular-nums mt-0.5" style={{ fontFamily: 'var(--mono)', color: runwayAccent(actualBurnResult.pureRunway) }}>
+                    {fmtRunway(actualBurnResult.pureRunway)}{isFinite(actualBurnResult.pureRunway) ? ' 개월' : ''}
+                  </div>
+                </div>
+                <Target size={14} style={{ color: runwayAccent(actualBurnResult.pureRunway), marginBottom: 4 }} />
+              </div>
+            </div>
+
+            {/* 가용자금 */}
+            <div className="rounded-xl p-5"
+                 style={{ background: 'rgba(255,255,255,0.95)', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: COLOR.info, letterSpacing: '0.12em' }}>가용자금</span>
+                <Activity size={14} style={{ color: COLOR.info }} />
+              </div>
+              <div className="text-3xl font-bold tabular-nums" style={{ color: COLOR.text, fontFamily: 'var(--mono)', letterSpacing: '-0.02em' }}>
+                {formatCompactKRW(availableForRunway)}
+              </div>
+              <div className="text-[11px] mt-1" style={{ color: COLOR.textMute }}>
+                순수 {formatCompactKRW(pureFunds)} + 한도 {formatCompactKRW(creditLimitSum)}
+              </div>
+              <div className="mt-4 pt-3 flex items-end justify-between" style={{ borderTop: `1px solid ${COLOR.border}` }}>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider" style={{ color: COLOR.textMute, letterSpacing: '0.08em' }}>실적 런웨이</div>
+                  <div className="text-xl font-semibold tabular-nums mt-0.5" style={{ fontFamily: 'var(--mono)', color: runwayAccent(actualBurnResult.availableRunway) }}>
+                    {fmtRunway(actualBurnResult.availableRunway)}{isFinite(actualBurnResult.availableRunway) ? ' 개월' : ''}
+                  </div>
+                </div>
+                <Target size={14} style={{ color: runwayAccent(actualBurnResult.availableRunway), marginBottom: 4 }} />
+              </div>
+            </div>
+
+            {/* 재무제표자금 */}
+            <div className="rounded-xl p-5"
+                 style={{ background: 'rgba(255,255,255,0.95)', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold uppercase tracking-wider flex items-center gap-1.5" style={{ color: COLOR.purple, letterSpacing: '0.12em' }}>
+                  재무제표자금
+                </span>
+                <TrendingUp size={14} style={{ color: COLOR.purple }} />
+              </div>
+              <div className="text-3xl font-bold tabular-nums" style={{ color: COLOR.text, fontFamily: 'var(--mono)', letterSpacing: '-0.02em' }}>
+                {formatCompactKRW(financialFunds)}
+              </div>
+              <div className="text-[11px] mt-1" style={{ color: COLOR.textMute }}>
+                순수 {formatCompactKRW(pureFunds)} + R&D {formatCompactKRW(rdFunds)}
+              </div>
+              <div className="mt-4 pt-3 flex items-end justify-between" style={{ borderTop: `1px solid ${COLOR.border}` }}>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider flex items-center gap-1.5" style={{ color: COLOR.textMute, letterSpacing: '0.08em' }}>
+                    실적 런웨이
+                    <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: COLOR.purple, background: `${COLOR.purple}15` }}>한도 제외</span>
+                  </div>
+                  <div className="text-xl font-semibold tabular-nums mt-0.5" style={{ fontFamily: 'var(--mono)', color: COLOR.purple }}>
+                    {fmtRunway(actualBurnResult.financialRunway)}{isFinite(actualBurnResult.financialRunway) ? ' 개월' : ''}
+                  </div>
+                </div>
+                <Target size={14} style={{ color: COLOR.purple, marginBottom: 4 }} />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ==================== 계획 기준 런웨이 (전체계획 + 확정계획) ==================== */}
+      <Card className="p-5">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <div className="text-xs uppercase tracking-wider flex items-center gap-2" style={{ color: COLOR.textMute, letterSpacing: '0.12em' }}>
+            <CalendarIcon size={12} style={{ color: COLOR.info }} /> 계획 기준 런웨이
+            <span className="text-[10px]" style={{ color: COLOR.textMute }}>(자금은 실적 기준, 넷번은 계획 기준)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px]" style={{ color: COLOR.textMute }}>연도:</span>
+            <div className="flex rounded-lg overflow-hidden" style={{ border: `1px solid ${COLOR.border}` }}>
+              {planYears.map(y => (
+                <button key={y} onClick={() => setPlanYearFilter(y)}
+                        className="px-3 py-1 text-xs font-medium"
+                        style={{
+                          background: planYearFilter === y ? COLOR.info : COLOR.surfaceEl,
+                          color: planYearFilter === y ? '#fff' : COLOR.textDim,
+                        }}>{y}</button>
+              ))}
+              <button onClick={() => setPlanYearFilter('all')}
+                      className="px-3 py-1 text-xs font-medium"
+                      style={{
+                        background: planYearFilter === 'all' ? COLOR.info : COLOR.surfaceEl,
+                        color: planYearFilter === 'all' ? '#fff' : COLOR.textDim,
+                      }}>전체</button>
+            </div>
+          </div>
+        </div>
+
+        {/* 전체계획 */}
+        <div className="mb-5">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+            <div className="text-xs font-medium flex items-center gap-2" style={{ color: COLOR.text }}>
+              <span className="w-2 h-2 rounded-full" style={{ background: COLOR.info }} />
+              전체계획 기준
+            </div>
+            <div className="text-xs flex items-center gap-3 flex-wrap" style={{ color: COLOR.textDim }}>
+              <span>
+                넷번: <b style={{ color: COLOR.info, fontFamily: 'var(--mono)' }}>{allPlanBurnResult.burn > 0 ? formatCompactKRW(allPlanBurnResult.burn) : '—'}</b>
+              </span>
+              <span>
+                재무제표: <b style={{ color: COLOR.purple, fontFamily: 'var(--mono)' }}>{allPlanBurnResult.financialBurn > 0 ? formatCompactKRW(allPlanBurnResult.financialBurn) : '—'}</b>
+              </span>
+              <span style={{ color: COLOR.textMute }}>{allPlanBurnResult.monthCount}개월</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+            <div className="p-3 rounded-lg" style={{ background: COLOR.surfaceEl, border: `1px solid ${COLOR.border}` }}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium" style={{ color: COLOR.textDim }}>순수자금</span>
+                <span className="text-sm font-semibold tabular-nums" style={{ fontFamily: 'var(--mono)', color: runwayAccent(allPlanBurnResult.pureRunway) }}>
+                  {fmtRunway(allPlanBurnResult.pureRunway)}{isFinite(allPlanBurnResult.pureRunway) ? ' 개월' : ''}
+                </span>
+              </div>
+              <div className="text-[10px]" style={{ color: COLOR.textMute, fontFamily: 'var(--mono)' }}>
+                {formatCompactKRW(pureFunds)} ÷ {allPlanBurnResult.burn > 0 ? formatCompactKRW(allPlanBurnResult.burn) : '넷번 없음'}
+              </div>
+            </div>
+            <div className="p-3 rounded-lg" style={{ background: COLOR.surfaceEl, border: `1px solid ${COLOR.border}` }}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium" style={{ color: COLOR.textDim }}>가용자금</span>
+                <span className="text-sm font-semibold tabular-nums" style={{ fontFamily: 'var(--mono)', color: runwayAccent(allPlanBurnResult.availableRunway) }}>
+                  {fmtRunway(allPlanBurnResult.availableRunway)}{isFinite(allPlanBurnResult.availableRunway) ? ' 개월' : ''}
+                </span>
+              </div>
+              <div className="text-[10px]" style={{ color: COLOR.textMute, fontFamily: 'var(--mono)' }}>
+                {formatCompactKRW(availableForRunway)} ÷ {allPlanBurnResult.burn > 0 ? formatCompactKRW(allPlanBurnResult.burn) : '넷번 없음'}
+              </div>
+            </div>
+            <div className="p-3 rounded-lg" style={{ background: `${COLOR.purple}0d`, border: `1px solid ${COLOR.purple}30` }}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: COLOR.textDim }}>
+                  재무제표
+                  <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: COLOR.purple, background: `${COLOR.purple}15` }}>한도 제외</span>
+                </span>
+                <span className="text-sm font-semibold tabular-nums" style={{ fontFamily: 'var(--mono)', color: COLOR.purple }}>
+                  {fmtRunway(allPlanBurnResult.financialRunway)}{isFinite(allPlanBurnResult.financialRunway) ? ' 개월' : ''}
+                </span>
+              </div>
+              <div className="text-[10px]" style={{ color: COLOR.textMute, fontFamily: 'var(--mono)' }}>
+                {formatCompactKRW(financialFunds)} ÷ {allPlanBurnResult.financialBurn > 0 ? formatCompactKRW(allPlanBurnResult.financialBurn) : '넷번 없음'}
+              </div>
+            </div>
+          </div>
+
+          {/* 전체계획 월별 입출금 + 누적 잔액 차트 */}
+          <MonthlyBalanceChart
+            series={allPlanBalanceSeries}
+            negativeMonth={allPlanNegativeMonth}
+            accentColor={COLOR.info}
+            titleLabel="월별 입출금 & 누적 순수자금 추이 (전체계획)"
+          />
+        </div>
+
+        {/* 확정계획 - 식스티만 */}
+        {confirmedPlanAvailable ? (
+          <div style={{ paddingTop: 16, borderTop: `1px dashed ${COLOR.border}` }}>
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+              <div className="text-xs font-medium flex items-center gap-2" style={{ color: COLOR.text }}>
+                <span className="w-2 h-2 rounded-full" style={{ background: COLOR.gold }} />
+                확정계획 기준
+                <span className="text-[10px]" style={{ color: COLOR.textMute }}>(식스티헤르츠만 존재)</span>
+              </div>
+              <div className="text-xs flex items-center gap-3 flex-wrap" style={{ color: COLOR.textDim }}>
+                <span>
+                  넷번: <b style={{ color: COLOR.gold, fontFamily: 'var(--mono)' }}>{confirmedPlanBurnResult.burn > 0 ? formatCompactKRW(confirmedPlanBurnResult.burn) : '—'}</b>
+                </span>
+                <span>
+                  재무제표: <b style={{ color: COLOR.purple, fontFamily: 'var(--mono)' }}>{confirmedPlanBurnResult.financialBurn > 0 ? formatCompactKRW(confirmedPlanBurnResult.financialBurn) : '—'}</b>
+                </span>
+                <span style={{ color: COLOR.textMute }}>{confirmedPlanBurnResult.monthCount}개월</span>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+              <div className="p-3 rounded-lg" style={{ background: `${COLOR.gold}0d`, border: `1px solid ${COLOR.gold}40` }}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium" style={{ color: COLOR.textDim }}>순수자금</span>
+                  <span className="text-sm font-semibold tabular-nums" style={{ fontFamily: 'var(--mono)', color: runwayAccent(confirmedPlanBurnResult.pureRunway) }}>
+                    {fmtRunway(confirmedPlanBurnResult.pureRunway)}{isFinite(confirmedPlanBurnResult.pureRunway) ? ' 개월' : ''}
+                  </span>
+                </div>
+                <div className="text-[10px]" style={{ color: COLOR.textMute, fontFamily: 'var(--mono)' }}>
+                  {formatCompactKRW(pureFunds)} ÷ {confirmedPlanBurnResult.burn > 0 ? formatCompactKRW(confirmedPlanBurnResult.burn) : '넷번 없음'}
+                </div>
+              </div>
+              <div className="p-3 rounded-lg" style={{ background: `${COLOR.gold}0d`, border: `1px solid ${COLOR.gold}40` }}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium" style={{ color: COLOR.textDim }}>가용자금</span>
+                  <span className="text-sm font-semibold tabular-nums" style={{ fontFamily: 'var(--mono)', color: runwayAccent(confirmedPlanBurnResult.availableRunway) }}>
+                    {fmtRunway(confirmedPlanBurnResult.availableRunway)}{isFinite(confirmedPlanBurnResult.availableRunway) ? ' 개월' : ''}
+                  </span>
+                </div>
+                <div className="text-[10px]" style={{ color: COLOR.textMute, fontFamily: 'var(--mono)' }}>
+                  {formatCompactKRW(availableForRunway)} ÷ {confirmedPlanBurnResult.burn > 0 ? formatCompactKRW(confirmedPlanBurnResult.burn) : '넷번 없음'}
+                </div>
+              </div>
+              <div className="p-3 rounded-lg" style={{ background: `${COLOR.purple}0d`, border: `1px solid ${COLOR.purple}30` }}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: COLOR.textDim }}>
+                    재무제표
+                    <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: COLOR.purple, background: `${COLOR.purple}15` }}>한도 제외</span>
+                  </span>
+                  <span className="text-sm font-semibold tabular-nums" style={{ fontFamily: 'var(--mono)', color: COLOR.purple }}>
+                    {fmtRunway(confirmedPlanBurnResult.financialRunway)}{isFinite(confirmedPlanBurnResult.financialRunway) ? ' 개월' : ''}
+                  </span>
+                </div>
+                <div className="text-[10px]" style={{ color: COLOR.textMute, fontFamily: 'var(--mono)' }}>
+                  {formatCompactKRW(financialFunds)} ÷ {confirmedPlanBurnResult.financialBurn > 0 ? formatCompactKRW(confirmedPlanBurnResult.financialBurn) : '넷번 없음'}
+                </div>
+              </div>
+            </div>
+
+            {/* 확정계획 월별 입출금 + 누적 잔액 차트 */}
+            <MonthlyBalanceChart
+              series={confirmedPlanBalanceSeries}
+              negativeMonth={confirmedPlanNegativeMonth}
+              accentColor={COLOR.gold}
+              titleLabel="월별 입출금 & 누적 순수자금 추이 (확정계획)"
+            />
+          </div>
+        ) : (
+          <div style={{ paddingTop: 16, borderTop: `1px dashed ${COLOR.border}` }}>
+            <div className="text-xs px-3 py-2 rounded-lg flex items-center gap-2"
+                 style={{ color: COLOR.textMute, background: COLOR.surfaceEl, border: `1px dashed ${COLOR.border}` }}>
+              <AlertCircle size={12} />
+              확정계획 런웨이는 식스티헤르츠 법인에만 존재합니다. 현재 선택된 법인에는 확정계획 데이터가 없어요.
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* 한도약정 사용 현황 */}
+      {(creditAccounts.length > 0 || separateCredits.length > 0) && (
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <div>
+              <div className="text-sm font-semibold flex items-center gap-2" style={{ color: COLOR.text }}>
+                <CreditCard size={16} style={{ color: COLOR.purple }} />
+                한도약정계좌 사용 현황
+              </div>
+              <div className="text-xs mt-0.5" style={{ color: COLOR.textMute }}>
+                파일 내 {creditAccounts.length}개 + 별도 {separateCredits.length}개 · 총 한도 <b style={{ color: COLOR.gold, fontFamily: 'var(--mono)' }}>{formatCompactKRW(creditLimitSum)}</b>
+                {' · '}사용 <span style={{ color: COLOR.danger, fontFamily: 'var(--mono)' }}>{formatCompactKRW(creditUsedSum)}</span> ({formatPct(creditUsageRate)})
+                {' · '}잔여 <b style={{ color: COLOR.success, fontFamily: 'var(--mono)' }}>{formatCompactKRW(creditLimitSum - creditUsedSum)}</b>
+              </div>
+            </div>
+          </div>
+
+          {/* 계좌별 상세 (파일 내) */}
+          <div className="space-y-3">
+            {creditAccounts.map(c => (
+              <div key={c.id} className="flex items-center gap-3 flex-wrap">
+                <div style={{ minWidth: 180 }}>
+                  <div className="text-xs font-medium" style={{ color: COLOR.text, fontFamily: 'var(--mono)' }}>{c.number}</div>
+                  <div className="text-[10px]" style={{ color: COLOR.textMute }}>
+                    {c.entity}
+                    {c.limit > 0 && <span style={{ color: COLOR.gold, marginLeft: 6 }}>· 한도 {formatCompactKRW(c.limit)}</span>}
+                  </div>
+                </div>
+                <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: COLOR.borderHi, minWidth: 200 }}>
+                  <div className="h-full" style={{
+                    width: `${Math.min(100, c.usage)}%`,
+                    background: c.usage > 80 ? COLOR.danger : c.usage > 50 ? COLOR.gold : COLOR.purple,
+                  }} />
+                </div>
+                <div className="text-xs tabular-nums" style={{ fontFamily: 'var(--mono)', minWidth: 220, textAlign: 'right' }}>
+                  <span style={{ color: c.currentBalance >= 0 ? COLOR.success : COLOR.danger }}>
+                    잔액 {formatCompactKRW(c.currentBalance)}
+                  </span>
+                  <span style={{ color: COLOR.textMute }}> · 사용 {formatCompactKRW(c.used)}</span>
+                  <span style={{ color: COLOR.gold, marginLeft: 4 }}>· 잔여 {formatCompactKRW(c.remaining)}</span>
+                </div>
+                <div className="text-xs tabular-nums" style={{ fontFamily: 'var(--mono)', minWidth: 50, textAlign: 'right', color: COLOR.textDim }}>
+                  {c.usage.toFixed(0)}%
+                </div>
+              </div>
+            ))}
+
+            {/* 별도 한도약정 (파일에 없는 항목, 엔티티 스코프 적용) */}
+            {separateCredits.map((sep, i) => (
+              <div key={`sep_${i}`} className="flex items-center gap-3 flex-wrap pt-3"
+                   style={{ borderTop: creditAccounts.length > 0 ? `1px dashed ${COLOR.border}` : 'none' }}>
+                <div style={{ minWidth: 180 }}>
+                  <div className="text-xs font-medium flex items-center gap-1.5" style={{ color: COLOR.text }}>
+                    {sep.name}
+                    <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: COLOR.textMute, background: COLOR.surfaceEl, border: `1px solid ${COLOR.border}` }}>별도</span>
+                  </div>
+                  <div className="text-[10px]" style={{ color: COLOR.textMute }}>
+                    {sep.entity}<span style={{ color: COLOR.gold, marginLeft: 6 }}>· 한도 {formatCompactKRW(sep.limit)}</span>
+                  </div>
+                </div>
+                <div className="flex-1 text-xs" style={{ color: COLOR.textMute, minWidth: 200, fontStyle: 'italic' }}>
+                  계좌 마스터에 없는 별도 항목 — 잔액 미추적
+                </div>
+                <div className="text-xs tabular-nums" style={{ fontFamily: 'var(--mono)', minWidth: 180, textAlign: 'right', color: COLOR.textDim }}>
+                  한도 {formatCompactKRW(sep.limit)}
+                </div>
+                <div className="text-xs" style={{ minWidth: 50, textAlign: 'right', color: COLOR.textMute }}>—</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 pt-3 text-[11px] flex items-start gap-1.5" style={{ color: COLOR.textMute, borderTop: `1px solid ${COLOR.border}` }}>
+            <AlertCircle size={11} style={{ marginTop: 1, flexShrink: 0 }} />
+            <span>
+              한도약정계좌는 식스티헤르츠만 소유. 잔액 <b style={{ color: COLOR.success }}>(+)</b>는 보통예금(미사용) · 순수자금+가용자금 합산.
+              잔액 <b style={{ color: COLOR.danger }}>(-)</b>는 한도 사용 중 · 가용자금에서 차감. 가용자금 런웨이는 총 한도까지 포함해 계산.
+            </span>
+          </div>
+        </Card>
+      )}
+
+      {/* 월별 자금흐름 (실적 + 계획) */}
+      <Card className="p-5">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <div>
+            <div className="text-sm font-semibold" style={{ color: COLOR.text }}>월별 자금흐름 & 누적 잔액</div>
+            <div className="text-xs mt-0.5" style={{ color: COLOR.textMute }}>
+              기초 {formatCompactKRW(pureFundsOpening)}부터 시작 · 체크된 월은 실적, 그외는 계획 기준
+            </div>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="flex items-center gap-1.5 text-xs" style={{ color: COLOR.textDim }}>
+              <span className="w-2 h-2 rounded-full" style={{ background: COLOR.success }} />입금
+            </span>
+            <span className="flex items-center gap-1.5 text-xs" style={{ color: COLOR.textDim }}>
+              <span className="w-2 h-2 rounded-full" style={{ background: COLOR.danger }} />출금
+            </span>
+            <span className="flex items-center gap-1.5 text-xs" style={{ color: COLOR.textDim }}>
+              <span className="inline-block" style={{ width: 14, height: 2, background: COLOR.gold, verticalAlign: 'middle' }} />
+              누적 잔액
+            </span>
+          </div>
+        </div>
+
+        <div style={{ width: '100%', height: 320 }}>
+          <ResponsiveContainer>
+            <ComposedChart data={mergedMonthly} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
+              <defs>
+                <linearGradient id="balGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={COLOR.gold} stopOpacity={0.3} />
+                  <stop offset="100%" stopColor={COLOR.gold} stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke={COLOR.border} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="month" {...chartAxis()} />
+              <YAxis {...chartAxis()} tickFormatter={v => formatCompactKRW(v)} width={70} />
+              <Tooltip content={<ChartTooltip formatter={v => formatKRW(v)} />} />
+              <Bar dataKey="inflow" name="입금" radius={[3, 3, 0, 0]}>
+                {mergedMonthly.map((m, i) => (
+                  <Cell key={i} fill={COLOR.success} fillOpacity={m.isOpening ? 0 : (m.isActualized ? 0.95 : 0.42)} />
+                ))}
+              </Bar>
+              <Bar dataKey="outflow" name="출금" radius={[3, 3, 0, 0]}>
+                {mergedMonthly.map((m, i) => (
+                  <Cell key={i} fill={COLOR.danger} fillOpacity={m.isOpening ? 0 : (m.isActualized ? 0.95 : 0.42)} />
+                ))}
+              </Bar>
+              <Area type="monotone" dataKey="cumulativeBalance" name="누적 잔액"
+                    stroke={COLOR.gold} strokeWidth={2.5}
+                    fill="url(#balGradient)"
+                    dot={(props) => {
+                      const { cx, cy, payload, index } = props;
+                      const isNeg = payload.cumulativeBalance < 0;
+                      const r = payload.isOpening ? 5 : 3.5;
+                      return <circle key={index} cx={cx} cy={cy} r={r}
+                                     fill={isNeg ? COLOR.danger : COLOR.gold}
+                                     stroke={COLOR.surface} strokeWidth={1.5} />;
+                    }} />
+              <ReferenceLine y={0} stroke={COLOR.danger} strokeDasharray="4 4" strokeOpacity={0.5} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="text-[10px] mt-1" style={{ color: COLOR.textMute, textAlign: 'center' }}>
+          진한 막대 = 실적 · 연한 막대 = 계획 · 금색 면적 = 누적 잔액 추이
+        </div>
+
+        {/* 월별 체크리스트 + 저장 */}
+        <div className="mt-5 pt-4" style={{ borderTop: `1px solid ${COLOR.border}` }}>
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <div className="text-xs font-medium" style={{ color: COLOR.text }}>
+              월별 실적 반영 설정 <span style={{ color: COLOR.textMute, fontWeight: 'normal' }}>(체크하면 실적, 해제하면 계획)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              {draftDirty && (
+                <>
+                  <span className="text-[11px]" style={{ color: COLOR.gold }}>변경사항 있음</span>
+                  <button onClick={resetDraft} className="px-2.5 py-1 text-xs rounded-lg"
+                          style={{ background: 'transparent', color: COLOR.textDim, border: `1px solid ${COLOR.border}` }}>
+                    되돌리기
+                  </button>
+                </>
+              )}
+              <button onClick={saveActualized}
+                      disabled={!draftDirty}
+                      className="px-3 py-1 text-xs font-semibold rounded-lg"
+                      style={{ background: draftDirty ? COLOR.gold : COLOR.surfaceEl, color: draftDirty ? '#fff' : COLOR.textMute }}>
+                저장
+              </button>
+            </div>
+          </div>
+          <div className="overflow-x-auto" style={{ maxHeight: 280, overflowY: 'auto' }}>
+            <table className="w-full text-xs">
+              <thead style={{ position: 'sticky', top: 0, background: COLOR.surfaceEl }}>
+                <tr>
+                  <th className="px-3 py-2 text-left" style={{ color: COLOR.textMute, width: 50 }}>실적</th>
+                  <th className="px-3 py-2 text-left" style={{ color: COLOR.textMute }}>월</th>
+                  <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>실적 입금</th>
+                  <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>실적 출금</th>
+                  <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>계획 입금</th>
+                  <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>계획 출금</th>
+                  <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>적용 순증감</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mergedMonthly.filter(m => !m.isOpening).map(m => {
+                  const isChecked = draftActualized.has(m.month);
+                  return (
+                    <tr key={m.month} style={{ borderTop: `1px solid ${COLOR.border}` }}>
+                      <td className="px-3 py-2">
+                        <input type="checkbox" checked={isChecked} onChange={() => toggleDraft(m.month)}
+                               disabled={!m.hasActual}
+                               style={{ accentColor: COLOR.gold, cursor: m.hasActual ? 'pointer' : 'not-allowed' }} />
+                      </td>
+                      <td className="px-3 py-2" style={{ color: COLOR.text, fontFamily: 'var(--mono)' }}>
+                        {m.month}
+                        {!m.hasActual && <span className="ml-2 text-[9px]" style={{ color: COLOR.textMute }}>실적없음</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums" style={{ fontFamily: 'var(--mono)', color: m.hasActual ? COLOR.success : COLOR.textMute }}>
+                        {m.hasActual ? formatCompactKRW(m.actualInflow) : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums" style={{ fontFamily: 'var(--mono)', color: m.hasActual ? COLOR.danger : COLOR.textMute }}>
+                        {m.hasActual ? formatCompactKRW(m.actualOutflow) : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums" style={{ fontFamily: 'var(--mono)', color: m.hasPlan ? COLOR.success : COLOR.textMute, opacity: 0.7 }}>
+                        {m.hasPlan ? formatCompactKRW(m.planInflow) : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums" style={{ fontFamily: 'var(--mono)', color: m.hasPlan ? COLOR.danger : COLOR.textMute, opacity: 0.7 }}>
+                        {m.hasPlan ? formatCompactKRW(m.planOutflow) : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums font-medium" style={{ fontFamily: 'var(--mono)', color: m.net >= 0 ? COLOR.success : COLOR.danger }}>
+                        {formatCompactKRW(m.net)}
+                        <span className="ml-1 text-[9px]" style={{ color: COLOR.textMute }}>{m.isActualized ? '실적' : '계획'}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {mergedMonthly.filter(m => !m.isOpening).length === 0 && (
+                  <tr><td colSpan="7" className="px-3 py-6 text-center" style={{ color: COLOR.textMute }}>데이터 없음</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </Card>
+
+      {/* 자금구분별 + 법인별 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider mb-3" style={{ color: COLOR.textMute, letterSpacing: '0.12em' }}>자금구분별 현황</div>
+          <div className="space-y-3">
+            {fundTypeList.map((f, i) => {
+              const total = fundTypeList.reduce((s, x) => s + Math.abs(x.balance), 0);
+              const pct = total > 0 ? Math.abs(f.balance) / total * 100 : 0;
+              return (
+                <div key={f.fundType}>
+                  <div className="flex justify-between items-center mb-1">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full" style={{ background: CHART_PALETTE[i % CHART_PALETTE.length] }} />
+                      <span className="text-xs" style={{ color: COLOR.textDim }}>{f.fundType}</span>
+                      <span className="text-[10px]" style={{ color: COLOR.textMute }}>{f.count}개</span>
+                    </div>
+                    <span className="text-xs tabular-nums" style={{ fontFamily: 'var(--mono)', color: f.balance >= 0 ? COLOR.text : COLOR.danger }}>
+                      {formatCompactKRW(f.balance)}
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded-full overflow-hidden" style={{ background: COLOR.borderHi }}>
+                    <div className="h-full" style={{ width: `${pct}%`, background: CHART_PALETTE[i % CHART_PALETTE.length] }} />
+                  </div>
+                </div>
+              );
+            })}
+            {fundTypeList.length === 0 && <div className="text-sm py-4" style={{ color: COLOR.textMute }}>데이터 없음</div>}
+          </div>
+        </Card>
+
+        <Card className="p-5 lg:col-span-2">
+          <div className="text-xs uppercase tracking-wider mb-3" style={{ color: COLOR.textMute, letterSpacing: '0.12em' }}>법인별 순수자금</div>
+          <div className="space-y-2.5">
+            {byEntity.map(e => {
+              const maxPure = Math.max(...byEntity.map(x => Math.max(0, x.pureFunds)), 1);
+              const pct = Math.max(0, e.pureFunds) / maxPure * 100;
+              return (
+                <div key={e.name} className="flex items-center gap-3">
+                  <div className="text-xs" style={{ color: COLOR.textDim, minWidth: 140 }}>{e.name}</div>
+                  <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: COLOR.borderHi }}>
+                    <div className="h-full" style={{ width: `${pct}%`, background: COLOR.gold }} />
+                  </div>
+                  <div className="text-right text-xs tabular-nums" style={{ fontFamily: 'var(--mono)', color: e.pureFunds >= 0 ? COLOR.text : COLOR.danger, minWidth: 90 }}>{formatCompactKRW(e.pureFunds)}</div>
+                </div>
+              );
+            })}
+            {byEntity.length === 0 && <div className="text-sm py-4" style={{ color: COLOR.textMute }}>데이터 없음</div>}
+          </div>
+        </Card>
+      </div>
+
+      {/* 누적 + 주요 입금/지출 분류 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Card className="p-5">
+          <div className="mb-3">
+            <div className="text-sm font-semibold" style={{ color: COLOR.text }}>자금 변동 추이</div>
+            <div className="text-xs mt-0.5" style={{ color: COLOR.textMute }}>실적 누적 순증감</div>
+          </div>
+          <div style={{ width: '100%', height: 240 }}>
+            <ResponsiveContainer>
+              <AreaChart data={cumulativeSeries} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                <defs><linearGradient id="cumGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={COLOR.gold} stopOpacity={0.35} /><stop offset="100%" stopColor={COLOR.gold} stopOpacity={0.02} /></linearGradient></defs>
+                <CartesianGrid stroke={COLOR.border} strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="month" {...chartAxis()} />
+                <YAxis {...chartAxis()} tickFormatter={v => formatCompactKRW(v)} width={70} />
+                <Tooltip content={<ChartTooltip formatter={v => formatKRW(v)} />} />
+                <Area type="monotone" dataKey="cumulative" name="누적" stroke={COLOR.gold} strokeWidth={2} fill="url(#cumGradient)" />
+                <ReferenceLine y={0} stroke={COLOR.borderHi} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <div className="mb-3">
+            <div className="text-sm font-semibold" style={{ color: COLOR.text }}>주요 입금 분류</div>
+            <div className="text-xs mt-0.5" style={{ color: COLOR.textMute }}>자금이동 제외 · 상위 8개</div>
+          </div>
+          <div style={{ width: '100%', height: 240 }}>
+            <ResponsiveContainer>
+              <BarChart data={topIncomeCategories} layout="vertical" margin={{ top: 5, right: 10, left: 80, bottom: 5 }}>
+                <CartesianGrid stroke={COLOR.border} strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" {...chartAxis()} tickFormatter={v => formatCompactKRW(v)} />
+                <YAxis type="category" dataKey="name" {...chartAxis()} tick={{ fill: COLOR.textDim, fontSize: 11 }} width={80} />
+                <Tooltip content={<ChartTooltip formatter={v => formatKRW(v)} />} />
+                <Bar dataKey="value" name="금액" radius={[0, 4, 4, 0]}>
+                  {topIncomeCategories.map((_, i) => <Cell key={i} fill={COLOR.success} fillOpacity={1 - i * 0.08} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <div className="mb-3">
+            <div className="text-sm font-semibold" style={{ color: COLOR.text }}>주요 지출 분류</div>
+            <div className="text-xs mt-0.5" style={{ color: COLOR.textMute }}>자금이동 제외 · 상위 8개</div>
+          </div>
+          <div style={{ width: '100%', height: 240 }}>
+            <ResponsiveContainer>
+              <BarChart data={topExpenseCategories} layout="vertical" margin={{ top: 5, right: 10, left: 80, bottom: 5 }}>
+                <CartesianGrid stroke={COLOR.border} strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" {...chartAxis()} tickFormatter={v => formatCompactKRW(v)} />
+                <YAxis type="category" dataKey="name" {...chartAxis()} tick={{ fill: COLOR.textDim, fontSize: 11 }} width={80} />
+                <Tooltip content={<ChartTooltip formatter={v => formatKRW(v)} />} />
+                <Bar dataKey="value" name="금액" radius={[0, 4, 4, 0]}>
+                  {topExpenseCategories.map((_, i) => <Cell key={i} fill={COLOR.danger} fillOpacity={1 - i * 0.08} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+//  ACCOUNTS VIEW
+// ============================================================================
+function AccountsView({ metrics }) {
+  const [search, setSearch] = useState('');
+  const [accountTypeFilter, setAccountTypeFilter] = useState('all');
+  const [fundTypeFilter, setFundTypeFilter] = useState('all');
+
+  const accountTypeOptions = useMemo(() => {
+    const types = new Set(metrics.filteredAccounts.map(a => a.accountType).filter(Boolean));
+    return [{ value: 'all', label: '전체 계좌구분' }, ...Array.from(types).sort().map(t => ({ value: t, label: t }))];
+  }, [metrics.filteredAccounts]);
+  const fundTypeOptions = useMemo(() => {
+    const types = new Set(metrics.filteredAccounts.map(a => a.fundType).filter(Boolean));
+    return [{ value: 'all', label: '전체 자금구분' }, ...Array.from(types).sort().map(t => ({ value: t, label: t }))];
+  }, [metrics.filteredAccounts]);
+
+  const filtered = useMemo(() => {
+    // 한도약정계좌는 잔액이 +일 때만 포함 (-는 한도현황 섹션에서 별도 확인)
+    let list = metrics.filteredAccounts.filter(a =>
+      !(a.accountType === '한도약정계좌' && a.currentBalance < 0)
+    );
+    if (accountTypeFilter !== 'all') list = list.filter(a => a.accountType === accountTypeFilter);
+    if (fundTypeFilter !== 'all') list = list.filter(a => a.fundType === fundTypeFilter);
+    if (search) {
+      const s = search.toLowerCase();
+      list = list.filter(a => Object.values(a._raw || {}).some(v => String(v || '').toLowerCase().includes(s)));
+    }
+    return list;
+  }, [metrics.filteredAccounts, search, accountTypeFilter, fundTypeFilter]);
+
+  // 제외된 (-) 한도약정 계좌 개수 (안내용)
+  const excludedCreditCount = metrics.filteredAccounts.filter(a =>
+    a.accountType === '한도약정계좌' && a.currentBalance < 0
+  ).length;
+
+  const resetFilters = () => { setSearch(''); setAccountTypeFilter('all'); setFundTypeFilter('all'); };
+  const headers = filtered[0]?._headers || metrics.filteredAccounts[0]?._headers || [];
+
+  const handleExport = () => {
+    const allCols = [...headers, '입금계', '출금계', '현재잔액'];
+    const rowsForExport = filtered.map(a => ({
+      ...a._raw,
+      '입금계': a.inflowSum,
+      '출금계': a.outflowSum,
+      '현재잔액': a.currentBalance,
+    }));
+    exportCSV(`계좌현황_${new Date().toISOString().slice(0,10)}.csv`, rowsForExport, allCols);
+  };
+
+  const extraColumns = [
+    { key: 'inflowSum', header: '입금계',
+      render: row => formatKRW(row.inflowSum),
+      color: row => COLOR.success },
+    { key: 'outflowSum', header: '출금계',
+      render: row => formatKRW(row.outflowSum),
+      color: row => COLOR.danger },
+    { key: 'currentBalance', header: '현재잔액',
+      render: row => formatKRW(row.currentBalance),
+      color: row => row.currentBalance >= 0 ? COLOR.text : COLOR.danger },
+  ];
+
+  const totalBalance = filtered.reduce((s, a) => s + a.currentBalance, 0);
+  const totalOpening = filtered.reduce((s, a) => s + a.openingBalance, 0);
+  const totalInflow = filtered.reduce((s, a) => s + a.inflowSum, 0);
+  const totalOutflow = filtered.reduce((s, a) => s + a.outflowSum, 0);
+
+  return (
+    <div className="space-y-4">
+      {/* 컷오프 라벨 */}
+      <div className="flex items-center justify-between flex-wrap gap-2 px-1" style={{ color: COLOR.textMute }}>
+        <div className="text-xs flex items-center gap-2 flex-wrap">
+          <CalendarIcon size={12} />
+          <span>실적 반영 기준:</span>
+          <b style={{ color: metrics.useMonthFilter ? COLOR.gold : COLOR.textDim, fontFamily: 'var(--mono)' }}>{metrics.cutoffLabel}</b>
+          {!metrics.useMonthFilter && <span className="text-[11px]" style={{ color: COLOR.textMute }}>(대시보드의 월별 체크박스로 설정)</span>}
+          {excludedCreditCount > 0 && (
+            <span className="text-[11px] px-2 py-0.5 rounded" style={{ color: COLOR.purple, background: `${COLOR.purple}14`, border: `1px solid ${COLOR.purple}40` }}>
+              한도 사용중 계좌 {excludedCreditCount}개는 한도현황에서 별도 확인
+            </span>
+          )}
+        </div>
+        <div className="text-[11px]">입금계/출금계/현재잔액은 실적 마감된 월만 합산</div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <KPICard label="기초금액" value={formatCompactKRW(totalOpening)} subValue={`계좌 ${filtered.length}개`} icon={Activity} accent={COLOR.info} />
+        <KPICard label="입금계" value={formatCompactKRW(totalInflow)} subValue="실적 마감분" icon={TrendingUp} accent={COLOR.success} />
+        <KPICard label="출금계" value={formatCompactKRW(totalOutflow)} subValue="실적 마감분" icon={TrendingDown} accent={COLOR.danger} />
+        <KPICard label="순증감" value={formatCompactKRW(totalInflow - totalOutflow)}
+                 subValue={(totalInflow - totalOutflow) >= 0 ? '입금 > 출금' : '출금 > 입금'}
+                 icon={Activity}
+                 accent={(totalInflow - totalOutflow) >= 0 ? COLOR.success : COLOR.danger} />
+        <KPICard label="현재잔액" value={formatCompactKRW(totalBalance)}
+                 subValue="기초 + 입금 - 출금"
+                 icon={Wallet} accent={totalBalance >= 0 ? COLOR.gold : COLOR.danger} />
+      </div>
+
+      <Card className="overflow-hidden">
+        <div className="px-5 py-3 flex items-center gap-2 flex-wrap" style={{ background: COLOR.bg, borderBottom: `1px solid ${COLOR.border}` }}>
+          <FilterIcon size={12} style={{ color: COLOR.textMute }} />
+          <Select value={accountTypeFilter} onChange={setAccountTypeFilter} options={accountTypeOptions} width={150} />
+          <Select value={fundTypeFilter} onChange={setFundTypeFilter} options={fundTypeOptions} width={140} />
+          <TextInput value={search} onChange={setSearch} placeholder="모든 컬럼에서 검색" icon={Search} width={200} />
+          <div className="ml-auto flex items-center gap-2">
+            <ResetFiltersButton onClick={resetFilters} />
+            <DownloadButton onClick={handleExport} />
+          </div>
+        </div>
+        <RawTable headers={headers} rows={filtered} extraColumns={extraColumns} />
+      </Card>
+    </div>
+  );
+}
+
+// ============================================================================
+//  TRANSACTIONS VIEW
+// ============================================================================
+function TransactionsView({ metrics }) {
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [accountFilter, setAccountFilter] = useState('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [sortOrder, setSortOrder] = useState('desc'); // 'desc' = 최근순, 'asc' = 과거순
+  // 한도약정계좌 포함 여부: 'all' (모두) | 'exclude' (제외) | 'only' (한도약정만)
+  const [creditMode, setCreditMode] = useState('all');
+
+  // 한도약정 계좌 번호 집합
+  const creditAccountNumbers = useMemo(() => new Set(
+    metrics.filteredAccounts.filter(a => a.accountType === '한도약정계좌').map(a => a.number)
+  ), [metrics.filteredAccounts]);
+  const hasCreditAccounts = creditAccountNumbers.size > 0;
+
+  const categoryOptions = useMemo(() => {
+    const cats = new Set(metrics.filteredTransactions.map(t => t.category).filter(Boolean));
+    return [{ value: 'all', label: '전체 분류' }, ...Array.from(cats).sort().map(c => ({ value: c, label: c }))];
+  }, [metrics.filteredTransactions]);
+  const accountOptions = useMemo(() => {
+    const accs = new Set(metrics.filteredTransactions.map(t => t.accountNumber).filter(Boolean));
+    return [{ value: 'all', label: '전체 계좌' }, ...Array.from(accs).sort().map(a => ({ value: a, label: a }))];
+  }, [metrics.filteredTransactions]);
+
+  // 필터링된 거래
+  const filtered = useMemo(() => {
+    let list = [...metrics.filteredTransactions];
+    // 한도약정계좌 필터
+    if (creditMode === 'exclude') list = list.filter(t => !creditAccountNumbers.has(t.accountNumber));
+    if (creditMode === 'only') list = list.filter(t => creditAccountNumbers.has(t.accountNumber));
+    if (typeFilter === 'in') list = list.filter(t => t.inflow > 0);
+    if (typeFilter === 'out') list = list.filter(t => t.outflow > 0);
+    if (categoryFilter !== 'all') list = list.filter(t => t.category === categoryFilter);
+    if (accountFilter !== 'all') list = list.filter(t => t.accountNumber === accountFilter);
+    if (startDate) list = list.filter(t => t.date >= startDate);
+    if (endDate) list = list.filter(t => t.date <= endDate);
+    if (search) {
+      const s = search.toLowerCase();
+      list = list.filter(t => Object.values(t._raw || {}).some(v => String(v || '').toLowerCase().includes(s)));
+    }
+    return list;
+  }, [metrics.filteredTransactions, search, typeFilter, categoryFilter, accountFilter, startDate, endDate, creditMode, creditAccountNumbers]);
+
+  // 거래일 기준 오름차순 정렬 후 누적 잔액 계산 (항상 과거부터 누적)
+  const withBalance = useMemo(() => {
+    const asc = [...filtered].sort((a, b) => a.date.localeCompare(b.date));
+    let openingSum = 0;
+    if (accountFilter !== 'all') {
+      const acc = metrics.filteredAccounts.find(a => a.number === accountFilter);
+      openingSum = acc?.openingBalance || 0;
+    } else {
+      // 계좌 필터 없음: 현재 creditMode에 따라 기초금액도 맞게 합산
+      const relevantAccounts = metrics.filteredAccounts.filter(a => {
+        if (creditMode === 'exclude') return a.accountType !== '한도약정계좌';
+        if (creditMode === 'only') return a.accountType === '한도약정계좌';
+        return true;
+      });
+      openingSum = relevantAccounts.reduce((s, a) => s + a.openingBalance, 0);
+    }
+    let running = openingSum;
+    const ascWithBal = asc.map(t => {
+      running += t.amount;
+      return { ...t, runningBalance: running };
+    });
+    if (sortOrder === 'desc') return [...ascWithBal].reverse();
+    return ascWithBal;
+  }, [filtered, sortOrder, accountFilter, creditMode, metrics.filteredAccounts]);
+
+  const summary = useMemo(() => {
+    const inflow = filtered.reduce((s, t) => s + t.inflow, 0);
+    const outflow = filtered.reduce((s, t) => s + t.outflow, 0);
+    return { inflow, outflow, net: inflow - outflow };
+  }, [filtered]);
+
+  // 기초/기말 잔액 (UI 표시용)
+  const openingBalance = useMemo(() => {
+    if (accountFilter !== 'all') {
+      return metrics.filteredAccounts.find(a => a.number === accountFilter)?.openingBalance || 0;
+    }
+    const relevantAccounts = metrics.filteredAccounts.filter(a => {
+      if (creditMode === 'exclude') return a.accountType !== '한도약정계좌';
+      if (creditMode === 'only') return a.accountType === '한도약정계좌';
+      return true;
+    });
+    return relevantAccounts.reduce((s, a) => s + a.openingBalance, 0);
+  }, [accountFilter, creditMode, metrics.filteredAccounts]);
+  const closingBalance = openingBalance + summary.net;
+
+  // 한도약정 거래 건수 (안내용)
+  const creditTxCount = metrics.filteredTransactions.filter(t => creditAccountNumbers.has(t.accountNumber)).length;
+
+  const resetFilters = () => {
+    setSearch(''); setTypeFilter('all'); setCategoryFilter('all'); setAccountFilter('all');
+    setStartDate(''); setEndDate(''); setCreditMode('all');
+  };
+
+  const handleExport = () => {
+    const rowsForExport = withBalance.map(t => ({
+      ...t._raw,
+      '누적잔액': t.runningBalance,
+    }));
+    const headers = [...(withBalance[0]?._headers || []), '누적잔액'];
+    exportCSV(`입출금내역_${new Date().toISOString().slice(0,10)}.csv`, rowsForExport, headers);
+  };
+
+  const headers = withBalance[0]?._headers || metrics.filteredTransactions[0]?._headers || [];
+  const isAmountColumn = (h) => /^(입금|출금|금액|입금액|출금액)$/.test(String(h).trim());
+
+  // 크레딧 모드 설명 라벨
+  const creditModeDesc = {
+    all: '전체 거래',
+    exclude: '한도약정 거래 제외',
+    only: '한도약정 거래만',
+  }[creditMode];
+
+  return (
+    <div className="space-y-4">
+      {/* 한도약정 필터 토글 (있을 때만) */}
+      {hasCreditAccounts && (
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-medium" style={{ color: COLOR.textDim }}>한도약정계좌 거래:</span>
+            <div className="flex rounded-lg overflow-hidden" style={{ border: `1px solid ${COLOR.border}` }}>
+              <button onClick={() => setCreditMode('all')}
+                      className="px-3 py-1.5 text-xs font-medium"
+                      style={{
+                        background: creditMode === 'all' ? COLOR.gold : COLOR.surface,
+                        color: creditMode === 'all' ? '#fff' : COLOR.textDim,
+                      }}>포함 (전체)</button>
+              <button onClick={() => setCreditMode('exclude')}
+                      className="px-3 py-1.5 text-xs font-medium"
+                      style={{
+                        background: creditMode === 'exclude' ? COLOR.gold : COLOR.surface,
+                        color: creditMode === 'exclude' ? '#fff' : COLOR.textDim,
+                        borderLeft: `1px solid ${COLOR.border}`,
+                      }}>제외</button>
+              <button onClick={() => setCreditMode('only')}
+                      className="px-3 py-1.5 text-xs font-medium"
+                      style={{
+                        background: creditMode === 'only' ? COLOR.gold : COLOR.surface,
+                        color: creditMode === 'only' ? '#fff' : COLOR.textDim,
+                        borderLeft: `1px solid ${COLOR.border}`,
+                      }}>한도약정만</button>
+            </div>
+            <span className="text-[11px]" style={{ color: COLOR.textMute }}>
+              · 한도약정 거래 {creditTxCount}건 ({creditAccountNumbers.size}개 계좌)
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* 상단 요약 - 기초/입금/출금/순증감/기말 */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <KPICard label="기초금액"
+                 value={formatCompactKRW(openingBalance)}
+                 subValue={accountFilter !== 'all' ? '선택 계좌' : (creditMode === 'all' ? '전체 계좌' : creditModeDesc)}
+                 icon={Activity} accent={COLOR.info} />
+        <KPICard label="입금계" value={formatCompactKRW(summary.inflow)}
+                 subValue={`${filtered.filter(t => t.inflow > 0).length}건`}
+                 icon={TrendingUp} accent={COLOR.success} />
+        <KPICard label="출금계" value={formatCompactKRW(summary.outflow)}
+                 subValue={`${filtered.filter(t => t.outflow > 0).length}건`}
+                 icon={TrendingDown} accent={COLOR.danger} />
+        <KPICard label="순증감" value={formatCompactKRW(summary.net)}
+                 subValue={summary.net >= 0 ? '입금 > 출금' : '출금 > 입금'}
+                 icon={Activity}
+                 accent={summary.net >= 0 ? COLOR.success : COLOR.danger} />
+        <KPICard label="기말잔액" value={formatCompactKRW(closingBalance)}
+                 subValue="기초 + 순증감"
+                 icon={Wallet}
+                 accent={closingBalance >= 0 ? COLOR.gold : COLOR.danger} />
+      </div>
+
+      <Card className="overflow-hidden">
+        <div className="px-5 py-4 flex items-start justify-between gap-4 flex-wrap" style={{ borderBottom: `1px solid ${COLOR.border}` }}>
+          <div>
+            <div className="text-sm font-semibold flex items-center gap-2" style={{ color: COLOR.text }}>
+              입출금 내역
+              {creditMode !== 'all' && (
+                <span className="text-[10px] px-2 py-0.5 rounded"
+                      style={{ color: COLOR.gold, background: `${COLOR.gold}15` }}>
+                  {creditModeDesc}
+                </span>
+              )}
+            </div>
+            <div className="text-xs mt-1" style={{ color: COLOR.textMute }}>
+              {filtered.length}건 · 누적잔액은 과거→현재 순으로 기초금액부터 계산
+            </div>
+          </div>
+        </div>
+        <div className="px-5 py-3 flex items-center gap-2 flex-wrap" style={{ background: COLOR.bg, borderBottom: `1px solid ${COLOR.border}` }}>
+          <FilterIcon size={12} style={{ color: COLOR.textMute }} />
+          <Select value={typeFilter} onChange={setTypeFilter} options={[{ value: 'all', label: '전체' }, { value: 'in', label: '입금만' }, { value: 'out', label: '출금만' }]} width={100} />
+          <Select value={categoryFilter} onChange={setCategoryFilter} options={categoryOptions} width={150} />
+          <Select value={accountFilter} onChange={setAccountFilter} options={accountOptions} width={180} />
+          <DateInput value={startDate} onChange={setStartDate} />
+          <span style={{ color: COLOR.textMute }}>~</span>
+          <DateInput value={endDate} onChange={setEndDate} />
+          <Select value={sortOrder} onChange={setSortOrder}
+                  options={[{ value: 'desc', label: '최근순' }, { value: 'asc', label: '과거순' }]} width={110} />
+          <TextInput value={search} onChange={setSearch} placeholder="모든 컬럼에서 검색" icon={Search} width={180} />
+          <div className="ml-auto flex items-center gap-2">
+            <ResetFiltersButton onClick={resetFilters} />
+            <DownloadButton onClick={handleExport} />
+          </div>
+        </div>
+
+        <div className="overflow-x-auto" style={{ maxHeight: 640, overflowY: 'auto' }}>
+          <table className="w-full text-sm">
+            <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: COLOR.surfaceEl }}>
+              <tr>
+                {headers.map(h => (
+                  <th key={h} className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap"
+                      style={{ color: COLOR.textMute, letterSpacing: '0.04em' }}>
+                    {h}
+                  </th>
+                ))}
+                <th className="px-3 py-3 text-right text-xs font-medium whitespace-nowrap"
+                    style={{ color: COLOR.gold, letterSpacing: '0.04em' }}>누적잔액 ✦</th>
+              </tr>
+            </thead>
+            <tbody>
+              {/* 기초 행 (과거순일 때 맨 위, 최근순일 때 안보임) */}
+              {sortOrder === 'asc' && withBalance.length > 0 && (
+                <tr style={{ background: COLOR.surfaceEl, borderTop: `1px solid ${COLOR.border}` }}>
+                  <td colSpan={headers.length} className="px-3 py-2.5"
+                      style={{ color: COLOR.textDim, fontStyle: 'italic', fontSize: 12 }}>
+                    ← 기초금액 ({accountFilter !== 'all' ? '선택 계좌' : '전체 계좌'})
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums font-semibold"
+                      style={{ fontFamily: 'var(--mono)', color: openingBalance >= 0 ? COLOR.gold : COLOR.danger, fontSize: 12 }}>
+                    {formatKRW(openingBalance)}
+                  </td>
+                </tr>
+              )}
+              {withBalance.slice(0, 1000).map((t, i) => (
+                <tr key={t.id || i} style={{ borderTop: `1px solid ${COLOR.border}` }}>
+                  {headers.map(h => {
+                    const rawVal = t._raw?.[h] ?? '';
+                    const isAmount = isAmountColumn(h);
+                    // 입금/출금 컬럼: 숫자만 있으면 콤마 포맷, 0이면 공백
+                    if (isAmount) {
+                      const n = Number(String(rawVal).replace(/,/g, '').replace(/[^\d.-]/g, ''));
+                      const displayVal = n > 0 ? Number(n).toLocaleString('ko-KR') : '';
+                      const isInflow = /입금/.test(String(h));
+                      return (
+                        <td key={h}
+                            className="px-3 py-2.5 whitespace-nowrap text-right tabular-nums"
+                            style={{ color: n > 0 ? (isInflow ? COLOR.success : COLOR.danger) : COLOR.textMute,
+                                     fontFamily: 'var(--mono)', fontSize: '12px' }}>
+                          {displayVal}
+                        </td>
+                      );
+                    }
+                    const numeric = looksNumeric(rawVal);
+                    return (
+                      <td key={h}
+                          className={`px-3 py-2.5 ${numeric ? 'whitespace-nowrap text-right tabular-nums' : ''}`}
+                          style={{ color: COLOR.text, fontFamily: numeric ? 'var(--mono)' : 'inherit', fontSize: numeric ? '12px' : '13px' }}>
+                        {rawVal}
+                      </td>
+                    );
+                  })}
+                  {/* 누적잔액 컬럼 */}
+                  <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap font-medium"
+                      style={{ fontFamily: 'var(--mono)', fontSize: '12px',
+                               color: t.runningBalance >= 0 ? COLOR.text : COLOR.danger,
+                               background: t.runningBalance < 0 ? `${COLOR.danger}08` : 'transparent' }}>
+                    {formatKRW(t.runningBalance)}
+                  </td>
+                </tr>
+              ))}
+              {/* 기말 행 (최근순일 때 맨 위... 아니 맨 아래 표시) */}
+              {sortOrder === 'desc' && withBalance.length > 0 && (
+                <tr style={{ background: COLOR.surfaceEl, borderTop: `2px solid ${COLOR.border}` }}>
+                  <td colSpan={headers.length} className="px-3 py-2.5"
+                      style={{ color: COLOR.textDim, fontStyle: 'italic', fontSize: 12 }}>
+                    ← 기초금액 ({accountFilter !== 'all' ? '선택 계좌' : '전체 계좌'})
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums font-semibold"
+                      style={{ fontFamily: 'var(--mono)', color: openingBalance >= 0 ? COLOR.gold : COLOR.danger, fontSize: 12 }}>
+                    {formatKRW(openingBalance)}
+                  </td>
+                </tr>
+              )}
+              {withBalance.length === 0 && (
+                <tr><td colSpan={headers.length + 1} className="px-4 py-8 text-center" style={{ color: COLOR.textMute }}>데이터가 없습니다.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {withBalance.length > 1000 && (
+          <div className="px-4 py-3 text-center text-xs" style={{ color: COLOR.textMute, borderTop: `1px solid ${COLOR.border}` }}>
+            상위 1,000건만 표시 · 전체 {withBalance.length}건 (CSV 다운로드 시 전체 포함)
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ============================================================================
+//  PLANS VIEW
+// ============================================================================
+function PlansView({ metrics }) {
+  const [search, setSearch] = useState('');
+  const [planTypeFilter, setPlanTypeFilter] = useState('all');
+  const [subjectTypeFilter, setSubjectTypeFilter] = useState('all');
+  const [accountFilter, setAccountFilter] = useState('all');
+  const [monthFilter, setMonthFilter] = useState('all');
+
+  const planTypeOptions = useMemo(() => {
+    const types = new Set(metrics.filteredPlans.map(p => p.planType).filter(Boolean));
+    return [{ value: 'all', label: '전체 계획구분' }, ...Array.from(types).sort().map(t => ({ value: t, label: t }))];
+  }, [metrics.filteredPlans]);
+  const subjectTypeOptions = useMemo(() => {
+    const types = new Set(metrics.filteredPlans.map(p => p.subjectType).filter(Boolean));
+    return [{ value: 'all', label: '전체 주체' }, ...Array.from(types).sort().map(t => ({ value: t, label: t }))];
+  }, [metrics.filteredPlans]);
+  const accountOptions = useMemo(() => {
+    const accs = new Set(metrics.filteredPlans.map(p => p.account).filter(Boolean));
+    return [{ value: 'all', label: '전체 계정과목' }, ...Array.from(accs).sort().map(a => ({ value: a, label: a }))];
+  }, [metrics.filteredPlans]);
+  const monthOptions = useMemo(() => {
+    const months = [...new Set(metrics.filteredPlans.map(p => p.month))].filter(Boolean).sort();
+    return [{ value: 'all', label: '전체 월' }, ...months.map(m => ({ value: m, label: m }))];
+  }, [metrics.filteredPlans]);
+
+  const filtered = useMemo(() => {
+    let list = [...metrics.filteredPlans].sort((a, b) => a.month.localeCompare(b.month));
+    if (planTypeFilter !== 'all') list = list.filter(p => p.planType === planTypeFilter);
+    if (subjectTypeFilter !== 'all') list = list.filter(p => p.subjectType === subjectTypeFilter);
+    if (accountFilter !== 'all') list = list.filter(p => p.account === accountFilter);
+    if (monthFilter !== 'all') list = list.filter(p => p.month === monthFilter);
+    if (search) {
+      const s = search.toLowerCase();
+      list = list.filter(p => Object.values(p._raw || {}).some(v => String(v || '').toLowerCase().includes(s)));
+    }
+    return list;
+  }, [metrics.filteredPlans, search, planTypeFilter, subjectTypeFilter, accountFilter, monthFilter]);
+
+  const summary = useMemo(() => {
+    const inflow = filtered.reduce((s, p) => s + p.inflow, 0);
+    const outflow = filtered.reduce((s, p) => s + p.outflow, 0);
+    return { inflow, outflow, net: inflow - outflow };
+  }, [filtered]);
+
+  const monthlyChart = useMemo(() => {
+    const m = {};
+    filtered.forEach(p => {
+      if (!p.month) return;
+      if (!m[p.month]) m[p.month] = { month: p.month, inflow: 0, outflow: 0, net: 0 };
+      m[p.month].inflow += p.inflow;
+      m[p.month].outflow += p.outflow;
+      m[p.month].net += p.amount;
+    });
+    return Object.values(m).sort((a, b) => a.month.localeCompare(b.month));
+  }, [filtered]);
+
+  const resetFilters = () => { setSearch(''); setPlanTypeFilter('all'); setSubjectTypeFilter('all'); setAccountFilter('all'); setMonthFilter('all'); };
+  const headers = filtered[0]?._headers || metrics.filteredPlans[0]?._headers || [];
+
+  const handleExport = () => {
+    const rowsForExport = filtered.map(p => p._raw);
+    exportCSV(`자금계획_${new Date().toISOString().slice(0,10)}.csv`, rowsForExport, headers);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-4">
+        <KPICard label="계획 수입 합계" value={formatCompactKRW(summary.inflow)} icon={TrendingUp} accent={COLOR.success} />
+        <KPICard label="계획 지출 합계" value={formatCompactKRW(summary.outflow)} icon={TrendingDown} accent={COLOR.danger} />
+        <KPICard label="계획 순증감" value={formatCompactKRW(summary.net)} icon={Activity} accent={summary.net >= 0 ? COLOR.success : COLOR.danger} />
+      </div>
+
+      <Card className="p-5">
+        <div className="text-sm font-semibold mb-4" style={{ color: COLOR.text }}>월별 계획</div>
+        <div style={{ width: '100%', height: 280 }}>
+          <ResponsiveContainer>
+            <ComposedChart data={monthlyChart} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+              <CartesianGrid stroke={COLOR.border} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="month" {...chartAxis()} />
+              <YAxis {...chartAxis()} tickFormatter={v => formatCompactKRW(v)} width={70} />
+              <Tooltip content={<ChartTooltip formatter={v => formatKRW(v)} />} />
+              <Legend wrapperStyle={{ fontSize: 12, color: COLOR.textDim }} />
+              <Bar dataKey="inflow" name="수입 계획" fill={COLOR.success} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="outflow" name="지출 계획" fill={COLOR.danger} radius={[4, 4, 0, 0]} />
+              <Line type="monotone" dataKey="net" name="순증감" stroke={COLOR.gold} strokeWidth={2.5} dot={{ r: 3, fill: COLOR.gold }} />
+              <ReferenceLine y={0} stroke={COLOR.borderHi} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <div className="px-5 py-4" style={{ borderBottom: `1px solid ${COLOR.border}` }}>
+          <div className="text-sm font-semibold" style={{ color: COLOR.text }}>자금 계획 내역</div>
+          <div className="text-xs mt-0.5" style={{ color: COLOR.textMute }}>{filtered.length}건</div>
+        </div>
+        <div className="px-5 py-3 flex items-center gap-2 flex-wrap" style={{ background: COLOR.bg, borderBottom: `1px solid ${COLOR.border}` }}>
+          <FilterIcon size={12} style={{ color: COLOR.textMute }} />
+          <Select value={planTypeFilter} onChange={setPlanTypeFilter} options={planTypeOptions} width={130} />
+          <Select value={subjectTypeFilter} onChange={setSubjectTypeFilter} options={subjectTypeOptions} width={120} />
+          <Select value={monthFilter} onChange={setMonthFilter} options={monthOptions} width={120} />
+          <Select value={accountFilter} onChange={setAccountFilter} options={accountOptions} width={150} />
+          <TextInput value={search} onChange={setSearch} placeholder="모든 컬럼에서 검색" icon={Search} width={180} />
+          <div className="ml-auto flex items-center gap-2">
+            <ResetFiltersButton onClick={resetFilters} />
+            <DownloadButton onClick={handleExport} />
+          </div>
+        </div>
+        <RawTable headers={headers} rows={filtered.slice(0, 1000)} maxHeight={460} colSpan={headers.length} />
+        {filtered.length > 1000 && (
+          <div className="px-4 py-3 text-center text-xs" style={{ color: COLOR.textMute, borderTop: `1px solid ${COLOR.border}` }}>
+            상위 1,000건만 표시 · 전체 {filtered.length}건
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ============================================================================
+//  CATEGORY ANALYSIS VIEW (분류 × 거래처 분석)
+// ============================================================================
+function CategoryAnalysisView({ metrics }) {
+  const [direction, setDirection] = useState('in'); // 'in' | 'out'
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [search, setSearch] = useState('');
+
+  // 자금이동 제외 + 기간 필터
+  const relevantTxs = useMemo(() => {
+    let list = metrics.filteredTransactions.filter(t => t.category !== '자금이동');
+    if (startDate) list = list.filter(t => t.date >= startDate);
+    if (endDate) list = list.filter(t => t.date <= endDate);
+    // 방향에 따라 입금/출금 거래만
+    if (direction === 'in') list = list.filter(t => t.inflow > 0);
+    else if (direction === 'out') list = list.filter(t => t.outflow > 0);
+    return list;
+  }, [metrics.filteredTransactions, startDate, endDate, direction]);
+
+  // 사용 가능한 분류 목록 (현재 direction 기준)
+  const availableCategories = useMemo(() => {
+    const cats = {};
+    relevantTxs.forEach(t => {
+      const cat = t.category || '(미분류)';
+      if (!cats[cat]) cats[cat] = { name: cat, total: 0, count: 0 };
+      cats[cat].total += (direction === 'in' ? t.inflow : t.outflow);
+      cats[cat].count += 1;
+    });
+    return Object.values(cats).sort((a, b) => b.total - a.total);
+  }, [relevantTxs, direction]);
+
+  // 선택된 분류의 거래처별 집계
+  const counterpartRows = useMemo(() => {
+    const list = selectedCategory === 'all' ? relevantTxs : relevantTxs.filter(t => (t.category || '(미분류)') === selectedCategory);
+    const agg = {};
+    list.forEach(t => {
+      const cp = t.counterpart || '(미지정)';
+      if (!agg[cp]) agg[cp] = { counterpart: cp, total: 0, count: 0, lastDate: '', firstDate: '', categories: new Set() };
+      agg[cp].total += (direction === 'in' ? t.inflow : t.outflow);
+      agg[cp].count += 1;
+      if (t.date > agg[cp].lastDate) agg[cp].lastDate = t.date;
+      if (!agg[cp].firstDate || t.date < agg[cp].firstDate) agg[cp].firstDate = t.date;
+      agg[cp].categories.add(t.category || '(미분류)');
+    });
+    let rows = Object.values(agg).map(r => ({ ...r, categoryList: [...r.categories] }));
+    if (search) {
+      const s = search.toLowerCase();
+      rows = rows.filter(r => r.counterpart.toLowerCase().includes(s));
+    }
+    return rows.sort((a, b) => b.total - a.total);
+  }, [relevantTxs, selectedCategory, direction, search]);
+
+  const grandTotal = counterpartRows.reduce((s, r) => s + r.total, 0);
+  const grandCount = counterpartRows.reduce((s, r) => s + r.count, 0);
+
+  const resetFilters = () => { setSelectedCategory('all'); setSearch(''); setStartDate(''); setEndDate(''); };
+
+  const handleExport = () => {
+    const label = direction === 'in' ? '입금' : '출금';
+    const rows = counterpartRows.map(r => ({
+      '거래처': r.counterpart,
+      '분류': r.categoryList.join(', '),
+      [`${label}합계`]: r.total,
+      '건수': r.count,
+      '최초거래일': r.firstDate,
+      '마지막거래일': r.lastDate,
+    }));
+    const catPart = selectedCategory === 'all' ? '전체' : selectedCategory;
+    exportCSV(`거래처분석_${label}_${catPart}_${new Date().toISOString().slice(0,10)}.csv`, rows,
+      ['거래처', '분류', `${label}합계`, '건수', '최초거래일', '마지막거래일']);
+  };
+
+  const accentColor = direction === 'in' ? COLOR.success : COLOR.danger;
+  const directionLabel = direction === 'in' ? '입금' : '출금';
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2 px-1" style={{ color: COLOR.textMute }}>
+        <div className="text-xs flex items-center gap-2">
+          <AlertCircle size={12} />
+          <span>실적 기준 · 자금이동 제외 · 분류 선택 시 거래처별로 집계</span>
+        </div>
+      </div>
+
+      {/* 방향 토글 */}
+      <div className="flex gap-2">
+        <button onClick={() => { setDirection('in'); setSelectedCategory('all'); }}
+                className="px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
+                style={{
+                  background: direction === 'in' ? COLOR.success : COLOR.surface,
+                  color: direction === 'in' ? '#fff' : COLOR.textDim,
+                  border: `1px solid ${direction === 'in' ? COLOR.success : COLOR.border}`,
+                }}>
+          <TrendingUp size={14} /> 입금 분석
+        </button>
+        <button onClick={() => { setDirection('out'); setSelectedCategory('all'); }}
+                className="px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
+                style={{
+                  background: direction === 'out' ? COLOR.danger : COLOR.surface,
+                  color: direction === 'out' ? '#fff' : COLOR.textDim,
+                  border: `1px solid ${direction === 'out' ? COLOR.danger : COLOR.border}`,
+                }}>
+          <TrendingDown size={14} /> 출금 분석
+        </button>
+      </div>
+
+      {/* 1단계: 분류 선택 */}
+      <Card className="p-5">
+        <div className="mb-3 flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <div className="text-sm font-semibold" style={{ color: COLOR.text }}>① 분류 선택</div>
+            <div className="text-xs mt-0.5" style={{ color: COLOR.textMute }}>
+              {directionLabel} 분류 중 하나를 선택하면 해당 분류의 거래처별 집계가 아래에 표시됩니다
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <DateInput value={startDate} onChange={setStartDate} />
+            <span style={{ color: COLOR.textMute }}>~</span>
+            <DateInput value={endDate} onChange={setEndDate} />
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => setSelectedCategory('all')}
+                  className="px-3 py-2 rounded-lg text-xs flex items-center gap-2"
+                  style={{
+                    background: selectedCategory === 'all' ? accentColor : COLOR.surface,
+                    color: selectedCategory === 'all' ? '#fff' : COLOR.textDim,
+                    border: `1px solid ${selectedCategory === 'all' ? accentColor : COLOR.border}`,
+                  }}>
+            <span>전체</span>
+            <span style={{ fontFamily: 'var(--mono)', opacity: 0.8 }}>
+              {formatCompactKRW(availableCategories.reduce((s, c) => s + c.total, 0))}
+            </span>
+          </button>
+          {availableCategories.map(cat => (
+            <button key={cat.name} onClick={() => setSelectedCategory(cat.name)}
+                    className="px-3 py-2 rounded-lg text-xs flex items-center gap-2"
+                    style={{
+                      background: selectedCategory === cat.name ? accentColor : COLOR.surface,
+                      color: selectedCategory === cat.name ? '#fff' : COLOR.textDim,
+                      border: `1px solid ${selectedCategory === cat.name ? accentColor : COLOR.border}`,
+                    }}>
+              <span>{cat.name}</span>
+              <span style={{ fontFamily: 'var(--mono)', opacity: 0.8 }}>{formatCompactKRW(cat.total)}</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded" style={{
+                background: selectedCategory === cat.name ? 'rgba(255,255,255,0.2)' : COLOR.surfaceEl,
+                color: selectedCategory === cat.name ? '#fff' : COLOR.textMute,
+              }}>{cat.count}건</span>
+            </button>
+          ))}
+          {availableCategories.length === 0 && (
+            <div className="text-xs py-4" style={{ color: COLOR.textMute }}>표시할 분류가 없습니다.</div>
+          )}
+        </div>
+      </Card>
+
+      {/* 2단계: 거래처별 상세 */}
+      <Card className="overflow-hidden">
+        <div className="px-5 py-4 flex items-center justify-between flex-wrap gap-3" style={{ borderBottom: `1px solid ${COLOR.border}` }}>
+          <div>
+            <div className="text-sm font-semibold flex items-center gap-2" style={{ color: COLOR.text }}>
+              ② 거래처별 {directionLabel} 순위
+              <span className="text-xs font-normal px-2 py-0.5 rounded" style={{ color: accentColor, background: `${accentColor}15` }}>
+                {selectedCategory === 'all' ? '전체 분류' : selectedCategory}
+              </span>
+            </div>
+            <div className="text-xs mt-0.5" style={{ color: COLOR.textMute }}>
+              거래처 {counterpartRows.length}개 · 합계 {formatCompactKRW(grandTotal)} · {grandCount}건
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <TextInput value={search} onChange={setSearch} placeholder="거래처 검색" icon={Search} width={180} />
+            <ResetFiltersButton onClick={resetFilters} />
+            <DownloadButton onClick={handleExport} />
+          </div>
+        </div>
+        <div className="overflow-x-auto" style={{ maxHeight: 600, overflowY: 'auto' }}>
+          <table className="w-full text-sm">
+            <thead style={{ position: 'sticky', top: 0, zIndex: 1, background: COLOR.surfaceEl }}>
+              <tr>
+                <th className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute, width: 48 }}>순위</th>
+                <th className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute }}>거래처</th>
+                <th className="px-3 py-3 text-right text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute }}>{directionLabel} 합계</th>
+                <th className="px-3 py-3 text-right text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute }}>비중</th>
+                <th className="px-3 py-3 text-right text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute }}>건수</th>
+                <th className="px-3 py-3 text-right text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute }}>평균</th>
+                {selectedCategory === 'all' && <th className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute }}>주요 분류</th>}
+                <th className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute }}>최근 거래</th>
+              </tr>
+            </thead>
+            <tbody>
+              {counterpartRows.map((r, i) => {
+                const pct = grandTotal > 0 ? (r.total / grandTotal) * 100 : 0;
+                return (
+                  <tr key={i} style={{ borderTop: `1px solid ${COLOR.border}` }}>
+                    <td className="px-3 py-2.5 tabular-nums" style={{ color: COLOR.textDim, fontFamily: 'var(--mono)', fontSize: 11 }}>{i + 1}</td>
+                    <td className="px-3 py-2.5 font-medium" style={{ color: COLOR.text }}>{r.counterpart}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums font-semibold whitespace-nowrap" style={{ fontFamily: 'var(--mono)', color: accentColor }}>
+                      {formatKRW(r.total)}
+                    </td>
+                    <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                      <div className="flex items-center gap-2 justify-end">
+                        <div style={{ width: 60, height: 4, borderRadius: 2, background: COLOR.surfaceEl, overflow: 'hidden' }}>
+                          <div style={{ width: `${Math.min(100, pct)}%`, height: '100%', background: accentColor }} />
+                        </div>
+                        <span className="tabular-nums" style={{ fontFamily: 'var(--mono)', fontSize: 11, color: COLOR.textDim, minWidth: 36 }}>
+                          {pct.toFixed(1)}%
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums" style={{ fontFamily: 'var(--mono)', color: COLOR.textDim, fontSize: 12 }}>
+                      {r.count}
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums" style={{ fontFamily: 'var(--mono)', color: COLOR.textDim, fontSize: 12 }}>
+                      {formatCompactKRW(r.total / r.count)}
+                    </td>
+                    {selectedCategory === 'all' && (
+                      <td className="px-3 py-2.5" style={{ color: COLOR.textDim, fontSize: 11 }}>
+                        {r.categoryList.slice(0, 3).join(', ')}{r.categoryList.length > 3 ? ` 외 ${r.categoryList.length - 3}` : ''}
+                      </td>
+                    )}
+                    <td className="px-3 py-2.5 whitespace-nowrap" style={{ color: COLOR.textDim, fontFamily: 'var(--mono)', fontSize: 11 }}>
+                      {r.lastDate || '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+              {counterpartRows.length === 0 && (
+                <tr><td colSpan={selectedCategory === 'all' ? 8 : 7} className="px-4 py-8 text-center" style={{ color: COLOR.textMute }}>
+                  조건에 맞는 거래처가 없습니다.
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ============================================================================
+//  IMPORT VIEW
+// ============================================================================
+function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, accessToken, setAccessToken, tokenClient, setTokenClient }) {
+  const [mode, setMode] = useState('file'); // 'file' | 'drive'
+  const [importStatus, setImportStatus] = useState({});
+  const fileRefs = { accounts: useRef(null), transactions: useRef(null), plans: useRef(null) };
+  const [dragActive, setDragActive] = useState({});
+
+  // Drive 폼 상태 (설정 저장 전까지 임시)
+  const [formClientId, setFormClientId] = useState(driveSettings.clientId);
+  const [formUrl, setFormUrl] = useState(driveSettings.spreadsheetUrl);
+  const [formTabs, setFormTabs] = useState(driveSettings.tabs);
+  const [syncStatus, setSyncStatus] = useState(null); // 'loading' | 'success' | 'error'
+  const [syncMsg, setSyncMsg] = useState('');
+  const [lastSync, setLastSync] = useState(() => { try { return localStorage.getItem('finance:v2:lastSync') || ''; } catch { return ''; } });
+
+  // driveSettings 바뀌면 폼 동기화
+  useEffect(() => {
+    setFormClientId(driveSettings.clientId);
+    setFormUrl(driveSettings.spreadsheetUrl);
+    setFormTabs(driveSettings.tabs);
+  }, [driveSettings]);
+
+  // Google Identity Services 초기화
+  useEffect(() => {
+    if (!driveSettings.clientId || !window.google?.accounts?.oauth2) return;
+    try {
+      const client = window.google.accounts.oauth2.initTokenClient({
+        client_id: driveSettings.clientId,
+        scope: OAUTH_SCOPE,
+        callback: '',
+      });
+      setTokenClient(client);
+    } catch (e) {
+      setSyncStatus('error');
+      setSyncMsg(`인증 초기화 실패: ${e.message}`);
+    }
+  }, [driveSettings.clientId]);
+
+  const handleFile = async (file, slot) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const { headers, rows } = parseCSV(text);
+      if (rows.length === 0) {
+        setImportStatus(s => ({ ...s, [slot]: { ok: false, msg: '데이터가 없습니다.' } }));
+        return;
+      }
+      let next = { ...data };
+      let parsed, warnings = [];
+
+      if (slot === 'accounts') {
+        parsed = parseAccountsFile(headers, rows);
+        if (parsed.length === 0) warnings.push('법인명/은행NO가 인식되지 않았습니다. 헤더를 확인하세요.');
+        next.accounts = parsed;
+      } else if (slot === 'transactions') {
+        parsed = parseActualsFile(headers, rows);
+        next.transactions = parsed;
+        if (next.accounts.length > 0) {
+          const accNums = new Set(next.accounts.map(a => a.number));
+          const unmatched = parsed.filter(t => t.accountNumber && !accNums.has(t.accountNumber));
+          if (unmatched.length > 0) {
+            const uniq = [...new Set(unmatched.map(t => t.accountNumber))].slice(0, 3);
+            warnings.push(`⚠ ${unmatched.length}건은 계좌 마스터에 없는 계좌 (예: "${uniq.join('", "')}")`);
+          }
+        }
+      } else if (slot === 'plans') {
+        parsed = parsePlansFile(headers, rows);
+        next.plans = parsed;
+      }
+
+      setData(next);
+      setImportStatus(s => ({ ...s, [slot]: {
+        ok: true,
+        warning: warnings.length > 0,
+        msg: `${file.name} · ${parsed.length}건 가져오기 성공 (전체 ${rows.length}행)${warnings.length ? ' · ' + warnings.join(' · ') : ''}`,
+      }}));
+    } catch (e) {
+      setImportStatus(s => ({ ...s, [slot]: { ok: false, msg: `오류: ${e.message}` } }));
+    }
+  };
+
+  const makeDropHandlers = (slot) => ({
+    onDragEnter: (e) => { e.preventDefault(); e.stopPropagation(); setDragActive(d => ({ ...d, [slot]: true })); },
+    onDragLeave: (e) => { e.preventDefault(); e.stopPropagation(); setDragActive(d => ({ ...d, [slot]: false })); },
+    onDragOver: (e) => { e.preventDefault(); e.stopPropagation(); },
+    onDrop: (e) => {
+      e.preventDefault(); e.stopPropagation();
+      setDragActive(d => ({ ...d, [slot]: false }));
+      const file = e.dataTransfer.files?.[0];
+      if (file) handleFile(file, slot);
+    },
+  });
+
+  // === Drive 연동 핸들러 ===
+  const saveDriveSettings = () => {
+    const next = {
+      clientId: formClientId.trim(),
+      spreadsheetUrl: formUrl.trim(),
+      tabs: formTabs,
+    };
+    setDriveSettings(next);
+    setAccessToken(null); // Client ID 변경 시 토큰 재요청 필요
+    setSyncStatus('success');
+    setSyncMsg('설정이 저장되었습니다.');
+    setTimeout(() => { setSyncStatus(null); setSyncMsg(''); }, 2000);
+  };
+
+  const connectDrive = () => {
+    if (!driveSettings.clientId) {
+      setSyncStatus('error');
+      setSyncMsg('Client ID를 먼저 저장하세요.');
+      return;
+    }
+    if (!tokenClient) {
+      setSyncStatus('error');
+      setSyncMsg('Google 인증 라이브러리 로드 중입니다. 잠시 후 다시 시도하세요.');
+      return;
+    }
+    tokenClient.callback = (response) => {
+      if (response.error) {
+        setSyncStatus('error');
+        setSyncMsg(`인증 거부됨: ${response.error}${response.error_description ? ' - ' + response.error_description : ''}`);
+        return;
+      }
+      setAccessToken(response.access_token);
+      setSyncStatus('success');
+      setSyncMsg('Drive에 연결되었습니다. "데이터 동기화" 버튼을 눌러주세요.');
+    };
+    tokenClient.requestAccessToken({ prompt: '' });
+  };
+
+  const syncFromDrive = async () => {
+    if (!accessToken) {
+      setSyncStatus('error');
+      setSyncMsg('먼저 Drive에 연결하세요.');
+      return;
+    }
+    const ssid = extractSpreadsheetId(driveSettings.spreadsheetUrl);
+    if (!ssid) {
+      setSyncStatus('error');
+      setSyncMsg('유효한 스프레드시트 URL이 아닙니다.');
+      return;
+    }
+    setSyncStatus('loading');
+    setSyncMsg('동기화 중...');
+    try {
+      const [accArr, txArr, planArr] = await Promise.all([
+        fetchSheetArray(ssid, driveSettings.tabs.accounts, accessToken),
+        fetchSheetArray(ssid, driveSettings.tabs.transactions, accessToken),
+        fetchSheetArray(ssid, driveSettings.tabs.plans, accessToken),
+      ]);
+      // ⭐ CSV 텍스트로 변환 후 파일 업로드와 완전히 동일한 파서 사용
+      // 이렇게 하면 Sheets 동기화 = CSV 업로드 결과가 100% 일치
+      const accHR = sheetArrayToRowsWithHeaders(accArr);
+      const txHR = sheetArrayToRowsWithHeaders(txArr);
+      const planHR = sheetArrayToRowsWithHeaders(planArr);
+
+      const accounts = parseAccountsFile(accHR.headers, accHR.rows);
+      const transactions = parseActualsFile(txHR.headers, txHR.rows);
+      const plans = parsePlansFile(planHR.headers, planHR.rows);
+
+      // 계좌 매칭 확인
+      let unmatchedMsg = '';
+      if (accounts.length > 0 && transactions.length > 0) {
+        const accNums = new Set(accounts.map(a => a.number));
+        const unmatched = transactions.filter(t => t.accountNumber && !accNums.has(t.accountNumber));
+        if (unmatched.length > 0) {
+          const uniq = [...new Set(unmatched.map(t => t.accountNumber))].slice(0, 3);
+          unmatchedMsg = ` · ⚠ 거래 ${unmatched.length}건 계좌 매칭 실패 (예: "${uniq.join('", "')}")`;
+        }
+      }
+
+      setData({ accounts, transactions, plans });
+      const now = new Date().toISOString();
+      try { localStorage.setItem('finance:v2:lastSync', now); } catch {}
+      setLastSync(now);
+      setSyncStatus('success');
+      setSyncMsg(`동기화 완료 · 계좌 ${accounts.length} / 거래 ${transactions.length} / 계획 ${plans.length}${unmatchedMsg}`);
+    } catch (e) {
+      setSyncStatus('error');
+      if (String(e.message).includes('401') || String(e.message).toLowerCase().includes('unauthorized')) {
+        setSyncMsg('토큰이 만료되었습니다. 다시 연결해주세요.');
+        setAccessToken(null);
+      } else {
+        setSyncMsg(`오류: ${e.message}`);
+      }
+    }
+  };
+
+  const slots = [
+    {
+      key: 'accounts', title: '계좌 마스터 (Master_Accounts.csv)',
+      desc: '헤더: 법인명 · 계좌구분 · 자금구분 · 은행NO · 기초금액 · 순수자금_런웨이(Y/N) · 가용자금_런웨이(Y/N) · 재무제표_런웨이(Y/N)',
+      count: data.accounts.length, label: '계좌',
+    },
+    {
+      key: 'transactions', title: '입출금 실적 (Master_Actuals.csv)',
+      desc: '헤더: 법인명 · 거래일 · 거래처명 · 내용 · 분류 · 계정과목 · 입금 · 출금 · 거래통장(은행NO)',
+      count: data.transactions.length, label: '거래',
+    },
+    {
+      key: 'plans', title: '자금 계획 (Master_Plans.csv)',
+      desc: '헤더: 법인명 · 계획구분 · 주체구분 · 해당월 · 거래처명 · 계정과목 · 내용 · 입금액 · 출금액',
+      count: data.plans.length, label: '계획',
+    },
+  ];
+
+  const statusColor = syncStatus === 'error' ? COLOR.danger : syncStatus === 'success' ? COLOR.success : COLOR.gold;
+  const isConnected = !!accessToken;
+  const originUrl = typeof window !== 'undefined' ? window.location.origin : '';
+
+  return (
+    <div className="space-y-4">
+      {/* 모드 토글 */}
+      <div className="flex gap-2">
+        <button onClick={() => setMode('file')}
+                className="px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
+                style={{
+                  background: mode === 'file' ? COLOR.gold : COLOR.surfaceEl,
+                  color: mode === 'file' ? '#fff' : COLOR.textDim,
+                  border: `1px solid ${mode === 'file' ? COLOR.gold : COLOR.border}`,
+                }}>
+          <Upload size={14} /> 파일 업로드
+        </button>
+        <button onClick={() => setMode('drive')}
+                className="px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
+                style={{
+                  background: mode === 'drive' ? COLOR.gold : COLOR.surfaceEl,
+                  color: mode === 'drive' ? '#fff' : COLOR.textDim,
+                  border: `1px solid ${mode === 'drive' ? COLOR.gold : COLOR.border}`,
+                }}>
+          <Cloud size={14} /> Google Drive 연동
+        </button>
+      </div>
+
+      {/* 파일 업로드 모드 */}
+      {mode === 'file' && (
+        <>
+          <Card className="p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <Upload size={16} style={{ color: COLOR.gold }} />
+              <div className="text-sm font-semibold" style={{ color: COLOR.text }}>CSV 파일 업로드</div>
+            </div>
+            <div className="text-xs" style={{ color: COLOR.textDim, lineHeight: 1.7 }}>
+              세 개의 마스터 파일(<b style={{ color: COLOR.gold }}>Master_Accounts.csv</b>, <b style={{ color: COLOR.gold }}>Master_Actuals.csv</b>, <b style={{ color: COLOR.gold }}>Master_Plans.csv</b>)을 각각 해당 영역에 드래그하거나 클릭해서 업로드하세요.<br/>
+              계좌 마스터를 먼저 올린 뒤 실적을 올려야 계좌 매칭이 됩니다. <b style={{ color: COLOR.gold }}>모든 원본 컬럼이 그대로 보존</b>되며, 런웨이 Y/N 플래그에 따라 순수자금·가용자금이 계산됩니다.
+            </div>
+          </Card>
+
+          {slots.map(slot => {
+            const st = importStatus[slot.key];
+            const isActive = dragActive[slot.key];
+            return (
+              <Card key={slot.key} className="overflow-hidden">
+                <div className="px-5 py-4 flex items-center justify-between flex-wrap gap-3" style={{ borderBottom: `1px solid ${COLOR.border}` }}>
+                  <div>
+                    <div className="text-sm font-semibold" style={{ color: COLOR.text }}>{slot.title}</div>
+                    <div className="text-xs mt-0.5" style={{ color: COLOR.textMute }}>{slot.desc}</div>
+                  </div>
+                  <span className="text-xs px-2 py-1 rounded-md" style={{ background: COLOR.surfaceEl, color: COLOR.gold, fontFamily: 'var(--mono)' }}>
+                    저장된 {slot.label} {slot.count}건
+                  </span>
+                </div>
+                <div className="p-5">
+                  <div {...makeDropHandlers(slot.key)} onClick={() => fileRefs[slot.key].current?.click()}
+                       className={`rounded-xl p-6 text-center cursor-pointer transition-all ${isActive ? 'drop-zone-active' : ''}`}
+                       style={{ background: COLOR.bg, border: `2px dashed ${isActive ? COLOR.gold : COLOR.border}` }}>
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: `${COLOR.gold}18`, color: COLOR.gold }}>
+                        <Upload size={20} />
+                      </div>
+                      <div className="text-sm font-medium" style={{ color: COLOR.text }}>
+                        {isActive ? '여기에 놓으세요' : 'CSV 파일을 드래그하거나 클릭하여 업로드'}
+                      </div>
+                    </div>
+                    <input ref={fileRefs[slot.key]} type="file" accept=".csv,.txt" style={{ display: 'none' }}
+                           onChange={e => handleFile(e.target.files?.[0], slot.key)} />
+                  </div>
+                  {st && (() => {
+                    const stColor = !st.ok ? COLOR.danger : (st.warning ? COLOR.gold : COLOR.success);
+                    const StIcon = !st.ok ? XCircle : (st.warning ? AlertCircle : CheckCircle2);
+                    return (
+                      <div className="mt-3 text-xs px-3 py-2 rounded-lg flex items-start gap-2"
+                           style={{ color: stColor, background: `${stColor}14`, border: `1px solid ${stColor}40` }}>
+                        <StIcon size={13} style={{ marginTop: 1, flexShrink: 0 }} />
+                        <span>{st.msg}</span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </Card>
+            );
+          })}
+        </>
+      )}
+
+      {/* Google Drive 연동 모드 */}
+      {mode === 'drive' && (
+        <>
+          <Card className="p-5">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${COLOR.gold}18`, color: COLOR.gold }}>
+                  <Cloud size={20} />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold" style={{ color: COLOR.text }}>Google Drive 연동</div>
+                  <div className="text-xs mt-0.5 flex items-center gap-2 flex-wrap" style={{ color: COLOR.textMute }}>
+                    <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: isConnected ? COLOR.success : COLOR.danger }} />
+                    {isConnected ? '연결됨' : '연결 안됨'}
+                    {lastSync && <span>· 마지막 동기화 {new Date(lastSync).toLocaleString('ko-KR')}</span>}
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <button onClick={connectDrive}
+                        disabled={!driveSettings.clientId}
+                        className="px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
+                        style={{
+                          background: isConnected ? COLOR.surfaceEl : COLOR.gold,
+                          color: isConnected ? COLOR.text : '#fff',
+                          border: `1px solid ${isConnected ? COLOR.border : COLOR.gold}`,
+                        }}>
+                  <Link2 size={14} /> {isConnected ? '재연결' : 'Drive 연결'}
+                </button>
+                <button onClick={syncFromDrive}
+                        disabled={!isConnected || syncStatus === 'loading'}
+                        className="px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2"
+                        style={{ background: COLOR.gold, color: '#fff' }}>
+                  {syncStatus === 'loading' ? <Spinner /> : <RefreshCw size={14} />}
+                  데이터 동기화
+                </button>
+              </div>
+            </div>
+            {syncMsg && (
+              <div className="text-xs px-3 py-2 rounded-lg flex items-center gap-2 mb-3"
+                   style={{ color: statusColor, background: `${statusColor}14`, border: `1px solid ${statusColor}40` }}>
+                {syncStatus === 'success' && <CheckCircle2 size={13} />}
+                {syncStatus === 'error' && <XCircle size={13} />}
+                {syncStatus === 'loading' && <Spinner size={13} />}
+                {syncMsg}
+              </div>
+            )}
+            <div className="text-xs px-3 py-2 rounded-lg flex items-start gap-2"
+                 style={{ color: COLOR.info, background: `${COLOR.info}14`, border: `1px solid ${COLOR.info}40` }}>
+              <AlertCircle size={13} style={{ marginTop: 2 }} />
+              <div>
+                Drive 연동은 한 번의 <b>Google Cloud 설정</b>이 필요합니다 (OAuth Client ID 발급). 설정 후 시트의 탭 이름을 지정하면 파일 업로드와 동일한 파서로 데이터를 가져옵니다.
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <Settings size={16} style={{ color: COLOR.gold }} />
+              <div className="text-sm font-semibold" style={{ color: COLOR.text }}>연동 설정</div>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-medium" style={{ color: COLOR.textDim }}>Google OAuth Client ID</label>
+                  <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener"
+                     className="text-xs flex items-center gap-1" style={{ color: COLOR.gold }}>
+                    Google Cloud Console <ExternalLink size={10} />
+                  </a>
+                </div>
+                <input type="text" value={formClientId} onChange={e => setFormClientId(e.target.value)}
+                       placeholder="xxxxxxxxxxx-xxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
+                       className="w-full px-3 py-2 rounded-lg text-sm"
+                       style={{ background: COLOR.bg, border: `1px solid ${COLOR.border}`, color: COLOR.text, fontFamily: 'var(--mono)', fontSize: '12px' }} />
+                <div className="text-[11px] mt-1.5" style={{ color: COLOR.textMute }}>
+                  승인된 JavaScript 원본에 <code style={{ color: COLOR.gold, background: COLOR.surfaceEl, padding: '1px 6px', borderRadius: 4 }}>{originUrl || 'file://'}</code> 를 등록하세요.
+                  <br/>(로컬 파일로 열면 file:// 은 허용 안되어 로컬서버나 호스팅 필요)
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium mb-2 block" style={{ color: COLOR.textDim }}>마스터 스프레드시트 URL</label>
+                <input type="text" value={formUrl} onChange={e => setFormUrl(e.target.value)}
+                       placeholder="https://docs.google.com/spreadsheets/d/..."
+                       className="w-full px-3 py-2 rounded-lg text-sm"
+                       style={{ background: COLOR.bg, border: `1px solid ${COLOR.border}`, color: COLOR.text, fontFamily: 'var(--mono)', fontSize: '12px' }} />
+              </div>
+              <div>
+                <label className="text-xs font-medium mb-2 block" style={{ color: COLOR.textDim }}>시트 탭 이름</label>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  {[['accounts', '계좌 마스터'], ['transactions', '입출금 실적'], ['plans', '자금 계획']].map(([key, label]) => (
+                    <div key={key}>
+                      <div className="text-[10px] mb-1" style={{ color: COLOR.textMute }}>{label}</div>
+                      <input type="text" value={formTabs[key]} onChange={e => setFormTabs({ ...formTabs, [key]: e.target.value })}
+                             className="w-full px-3 py-2 rounded-lg text-sm"
+                             style={{ background: COLOR.bg, border: `1px solid ${COLOR.border}`, color: COLOR.text, fontFamily: 'var(--mono)', fontSize: '12px' }} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <button onClick={saveDriveSettings} className="px-4 py-2 rounded-lg text-sm font-semibold"
+                        style={{ background: COLOR.gold, color: '#fff' }}>설정 저장</button>
+              </div>
+            </div>
+          </Card>
+
+          {/* 도움말 */}
+          <Card className="p-5">
+            <div className="text-sm font-semibold mb-3" style={{ color: COLOR.text }}>설정 가이드 (처음 한 번만)</div>
+            <ol className="text-xs space-y-2 list-decimal pl-4" style={{ color: COLOR.textDim, lineHeight: 1.6 }}>
+              <li><a href="https://console.cloud.google.com" target="_blank" rel="noopener" style={{ color: COLOR.gold }}>Google Cloud Console</a>에서 프로젝트 생성</li>
+              <li>API 및 서비스 → 라이브러리 → <b style={{ color: COLOR.gold }}>Google Sheets API</b> 사용 설정</li>
+              <li>사용자 인증 정보 → OAuth 클라이언트 ID 만들기 → <b style={{ color: COLOR.gold }}>웹 애플리케이션</b> 유형</li>
+              <li>승인된 JavaScript 원본에 현재 주소 <code style={{ color: COLOR.gold, background: COLOR.surfaceEl, padding: '1px 4px', borderRadius: 3 }}>{originUrl || '(앱 URL)'}</code> 등록</li>
+              <li>발급된 Client ID를 위 필드에 입력 → 저장 → Drive 연결 → 동기화</li>
+            </ol>
+          </Card>
+        </>
+      )}
+
+      {/* 전체 데이터 관리 */}
+      <Card className="p-5">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <div className="text-sm font-semibold mb-1" style={{ color: COLOR.text }}>전체 데이터 관리</div>
+            <div className="text-xs" style={{ color: COLOR.textDim }}>
+              데이터는 이 브라우저에 자동 저장됩니다.
+            </div>
+          </div>
+          <button onClick={() => {
+            if (confirm('데이터를 모두 삭제하고 빈 상태로 초기화하시겠습니까?')) onReset();
+          }} className="px-3 py-2 rounded-lg text-xs flex items-center gap-1.5"
+             style={{ color: COLOR.danger, background: `${COLOR.danger}14`, border: `1px solid ${COLOR.danger}40` }}>
+            <RotateCcw size={13} />전체 초기화
+          </button>
+        </div>
+      </Card>
+
+      {/* === 데이터 진단 패널 (문제 진단용) === */}
+      {(data.accounts.length > 0 || data.transactions.length > 0 || data.plans.length > 0) && (
+        <Card className="overflow-hidden">
+          <details>
+            <summary className="px-5 py-4 cursor-pointer flex items-center gap-2" style={{ userSelect: 'none', borderBottom: `1px solid ${COLOR.border}` }}>
+              <ChevronDown size={14} style={{ color: COLOR.textMute }} />
+              <span className="text-sm font-semibold" style={{ color: COLOR.text }}>🔍 데이터 진단 (법인별 집계 · 매칭 상태)</span>
+              <span className="text-[11px] ml-2" style={{ color: COLOR.textMute }}>— 특정 법인이 이상할 때 여기서 원인 확인</span>
+            </summary>
+            <div className="p-5 space-y-5">
+              {/* 법인별 계좌/거래/계획 수 집계 */}
+              {(() => {
+                const entitiesSet = new Set([
+                  ...data.accounts.map(a => a.entity),
+                  ...data.transactions.map(t => t.entity),
+                  ...data.plans.map(p => p.entity),
+                ]);
+                const entities = [...entitiesSet].sort();
+                const stats = entities.map(e => {
+                  const accs = data.accounts.filter(a => a.entity === e);
+                  const txs = data.transactions.filter(t => t.entity === e);
+                  const plans = data.plans.filter(p => p.entity === e);
+                  const inflow = txs.reduce((s, t) => s + t.inflow, 0);
+                  const outflow = txs.reduce((s, t) => s + t.outflow, 0);
+                  return { entity: e, accs: accs.length, txs: txs.length, plans: plans.length, inflow, outflow, net: inflow - outflow };
+                });
+                return (
+                  <div>
+                    <div className="text-xs font-semibold mb-2" style={{ color: COLOR.text }}>① 법인별 데이터 집계</div>
+                    <div className="text-[11px] mb-3" style={{ color: COLOR.textMute }}>
+                      계좌/거래/계획 숫자가 0이거나 예상과 다르면, 해당 법인명이 각 시트에 정확히 일치하지 않는 거예요.
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead style={{ background: COLOR.surfaceEl }}>
+                          <tr>
+                            <th className="px-3 py-2 text-left" style={{ color: COLOR.textMute, fontWeight: 500 }}>법인명</th>
+                            <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute, fontWeight: 500 }}>계좌</th>
+                            <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute, fontWeight: 500 }}>거래</th>
+                            <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute, fontWeight: 500 }}>계획</th>
+                            <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute, fontWeight: 500 }}>입금계</th>
+                            <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute, fontWeight: 500 }}>출금계</th>
+                            <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute, fontWeight: 500 }}>순증감</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {stats.map(s => {
+                            const isProblem = s.accs === 0 || (s.txs === 0 && s.plans === 0);
+                            return (
+                              <tr key={s.entity} style={{ borderTop: `1px solid ${COLOR.border}`, background: isProblem ? `${COLOR.danger}10` : 'transparent' }}>
+                                <td className="px-3 py-2 font-medium" style={{ color: COLOR.text, fontFamily: 'var(--mono)' }}>
+                                  "{s.entity}"
+                                  {isProblem && <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded" style={{ color: COLOR.danger, background: `${COLOR.danger}25` }}>⚠ 확인필요</span>}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums" style={{ fontFamily: 'var(--mono)', color: s.accs === 0 ? COLOR.danger : COLOR.text }}>{s.accs}</td>
+                                <td className="px-3 py-2 text-right tabular-nums" style={{ fontFamily: 'var(--mono)', color: s.txs === 0 ? COLOR.danger : COLOR.text }}>{s.txs}</td>
+                                <td className="px-3 py-2 text-right tabular-nums" style={{ fontFamily: 'var(--mono)', color: s.plans === 0 ? COLOR.textMute : COLOR.text }}>{s.plans}</td>
+                                <td className="px-3 py-2 text-right tabular-nums" style={{ fontFamily: 'var(--mono)', color: COLOR.success }}>{formatCompactKRW(s.inflow)}</td>
+                                <td className="px-3 py-2 text-right tabular-nums" style={{ fontFamily: 'var(--mono)', color: COLOR.danger }}>{formatCompactKRW(s.outflow)}</td>
+                                <td className="px-3 py-2 text-right tabular-nums font-medium" style={{ fontFamily: 'var(--mono)', color: s.net >= 0 ? COLOR.success : COLOR.danger }}>{formatCompactKRW(s.net)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 법인명 불일치 감지 */}
+              {(() => {
+                const accEntities = new Set(data.accounts.map(a => a.entity));
+                const txEntities = new Set(data.transactions.map(t => t.entity));
+                const planEntities = new Set(data.plans.map(p => p.entity));
+                const inTxNotInAcc = [...txEntities].filter(e => !accEntities.has(e));
+                const inAccNotInTx = [...accEntities].filter(e => !txEntities.has(e));
+                const inPlanNotInAcc = [...planEntities].filter(e => !accEntities.has(e));
+                const hasIssue = inTxNotInAcc.length > 0 || inPlanNotInAcc.length > 0;
+
+                if (!hasIssue) {
+                  return (
+                    <div style={{ background: `${COLOR.success}10`, border: `1px solid ${COLOR.success}35`, borderRadius: 8, padding: 12 }}>
+                      <div className="text-xs font-semibold flex items-center gap-2" style={{ color: COLOR.success }}>
+                        <CheckCircle2 size={12} /> ② 법인명 매칭 상태: 정상
+                      </div>
+                      <div className="text-[11px] mt-1" style={{ color: COLOR.textDim }}>
+                        실적·계획의 모든 법인명이 계좌 마스터와 일치합니다.
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div style={{ background: `${COLOR.danger}10`, border: `1px solid ${COLOR.danger}35`, borderRadius: 8, padding: 12 }}>
+                    <div className="text-xs font-semibold flex items-center gap-2 mb-2" style={{ color: COLOR.danger }}>
+                      <AlertCircle size={12} /> ② 법인명 매칭 문제 발견
+                    </div>
+                    {inTxNotInAcc.length > 0 && (
+                      <div className="mb-2">
+                        <div className="text-[11px] font-medium" style={{ color: COLOR.text }}>실적에 있지만 계좌 마스터에 없는 법인명:</div>
+                        <div className="text-[11px] mt-1 space-y-0.5">
+                          {inTxNotInAcc.map(e => (
+                            <div key={e} style={{ fontFamily: 'var(--mono)', color: COLOR.danger }}>
+                              "{e}" <span style={{ color: COLOR.textMute }}>(공백 주의: 글자 수 {e.length})</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {inPlanNotInAcc.length > 0 && (
+                      <div>
+                        <div className="text-[11px] font-medium" style={{ color: COLOR.text }}>계획에 있지만 계좌 마스터에 없는 법인명:</div>
+                        <div className="text-[11px] mt-1 space-y-0.5">
+                          {inPlanNotInAcc.map(e => (
+                            <div key={e} style={{ fontFamily: 'var(--mono)', color: COLOR.danger }}>
+                              "{e}" <span style={{ color: COLOR.textMute }}>(공백 주의: 글자 수 {e.length})</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="text-[11px] mt-2" style={{ color: COLOR.textDim }}>
+                      💡 해결: Google Sheets에서 해당 법인명을 계좌 마스터 시트의 법인명과 완벽히 동일하게 수정 → 재동기화
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 거래통장 매칭 */}
+              {(() => {
+                const accNums = new Set(data.accounts.map(a => a.number));
+                const unmatchedTxs = data.transactions.filter(t => t.accountNumber && !accNums.has(t.accountNumber));
+                const unmatchedNums = [...new Set(unmatchedTxs.map(t => t.accountNumber))];
+
+                if (unmatchedNums.length === 0) {
+                  return (
+                    <div style={{ background: `${COLOR.success}10`, border: `1px solid ${COLOR.success}35`, borderRadius: 8, padding: 12 }}>
+                      <div className="text-xs font-semibold flex items-center gap-2" style={{ color: COLOR.success }}>
+                        <CheckCircle2 size={12} /> ③ 거래통장 ↔ 은행NO 매칭: 정상
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div style={{ background: `${COLOR.danger}10`, border: `1px solid ${COLOR.danger}35`, borderRadius: 8, padding: 12 }}>
+                    <div className="text-xs font-semibold flex items-center gap-2 mb-2" style={{ color: COLOR.danger }}>
+                      <AlertCircle size={12} /> ③ 거래통장 매칭 문제: {unmatchedTxs.length}건 ({unmatchedNums.length}개 통장)
+                    </div>
+                    <div className="text-[11px] mb-2" style={{ color: COLOR.text }}>
+                      실적에 있지만 계좌 마스터에 없는 거래통장:
+                    </div>
+                    <div className="text-[11px] space-y-0.5 max-h-32 overflow-y-auto" style={{ fontFamily: 'var(--mono)' }}>
+                      {unmatchedNums.slice(0, 20).map(n => {
+                        const sampleTx = unmatchedTxs.find(t => t.accountNumber === n);
+                        return (
+                          <div key={n} style={{ color: COLOR.danger }}>
+                            "{n}" <span style={{ color: COLOR.textMute }}>({sampleTx?.entity} · {unmatchedTxs.filter(t => t.accountNumber === n).length}건)</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="text-[11px] mt-2" style={{ color: COLOR.textDim }}>
+                      💡 해결: 실적 시트의 "거래통장" 값이 계좌 마스터의 "은행NO"와 정확히 같아야 해요. 하이픈/공백 등 주의.
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 날짜 포맷 진단 */}
+              {(() => {
+                const badDates = data.transactions.filter(t => !t.date || !/^\d{4}-\d{2}-\d{2}/.test(t.date));
+                if (badDates.length === 0) {
+                  return (
+                    <div style={{ background: `${COLOR.success}10`, border: `1px solid ${COLOR.success}35`, borderRadius: 8, padding: 12 }}>
+                      <div className="text-xs font-semibold flex items-center gap-2" style={{ color: COLOR.success }}>
+                        <CheckCircle2 size={12} /> ④ 거래일 포맷: 정상 (모든 거래의 날짜 파싱 성공)
+                      </div>
+                    </div>
+                  );
+                }
+                const samples = [...new Set(badDates.slice(0, 20).map(t => t._raw?.['거래일'] || t.date))];
+                return (
+                  <div style={{ background: `${COLOR.warning || COLOR.danger}10`, border: `1px solid ${COLOR.danger}35`, borderRadius: 8, padding: 12 }}>
+                    <div className="text-xs font-semibold flex items-center gap-2 mb-2" style={{ color: COLOR.danger }}>
+                      <AlertCircle size={12} /> ④ 거래일 파싱 실패: {badDates.length}건
+                    </div>
+                    <div className="text-[11px] space-y-0.5" style={{ fontFamily: 'var(--mono)', color: COLOR.text }}>
+                      {samples.slice(0, 10).map((d, i) => <div key={i}>"{d}"</div>)}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </details>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+//  MAIN APP
+// ============================================================================
+function FinanceDashboard() {
+  const [tab, setTab] = useState('dashboard');
+  const [entityFilter, setEntityFilter] = useState('all');
+  const [planTypeChoice, setPlanTypeChoice] = useState('전체계획');
+  const [planYearFilter, setPlanYearFilter] = useState('2026');
+  const [actualizedMonths, setActualizedMonths] = useState(new Set());
+  const [data, setData] = useState({ accounts: [], transactions: [], plans: [] });
+  const [loaded, setLoaded] = useState(false);
+  const [entityMenuOpen, setEntityMenuOpen] = useState(false);
+  // Google Drive 연동 상태
+  const [driveSettings, setDriveSettings] = useState(DEFAULT_DRIVE);
+  const [accessToken, setAccessToken] = useState(null); // session only (never persisted)
+  const [tokenClient, setTokenClient] = useState(null);
+
+  useEffect(() => {
+    try {
+      const a = localStorage.getItem(STORAGE_KEYS.accounts);
+      const t = localStorage.getItem(STORAGE_KEYS.transactions);
+      const p = localStorage.getItem(STORAGE_KEYS.plans);
+      const am = localStorage.getItem('finance:v2:actualizedMonths');
+      const dr = localStorage.getItem(STORAGE_KEYS.drive);
+      setData({
+        accounts: a ? JSON.parse(a) : [],
+        transactions: t ? JSON.parse(t) : [],
+        plans: p ? JSON.parse(p) : [],
+      });
+      if (am) setActualizedMonths(new Set(JSON.parse(am)));
+      if (dr) {
+        const parsed = JSON.parse(dr);
+        setDriveSettings({
+          ...DEFAULT_DRIVE,
+          ...parsed,
+          tabs: { ...DEFAULT_DRIVE.tabs, ...(parsed.tabs || {}) },
+        });
+      }
+    } catch { setData({ accounts: [], transactions: [], plans: [] }); }
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    try {
+      localStorage.setItem(STORAGE_KEYS.accounts, JSON.stringify(data.accounts));
+      localStorage.setItem(STORAGE_KEYS.transactions, JSON.stringify(data.transactions));
+      localStorage.setItem(STORAGE_KEYS.plans, JSON.stringify(data.plans));
+    } catch {}
+  }, [data, loaded]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    try {
+      localStorage.setItem('finance:v2:actualizedMonths', JSON.stringify([...actualizedMonths]));
+    } catch {}
+  }, [actualizedMonths, loaded]);
+
+  // Drive 설정만 저장 (accessToken은 저장하지 않음 — 보안상 세션 메모리만)
+  useEffect(() => {
+    if (!loaded) return;
+    try {
+      localStorage.setItem(STORAGE_KEYS.drive, JSON.stringify(driveSettings));
+    } catch {}
+  }, [driveSettings, loaded]);
+
+  const metrics = useMemo(() => calcMetrics(data, entityFilter, planTypeChoice, actualizedMonths, planYearFilter), [data, entityFilter, planTypeChoice, actualizedMonths, planYearFilter]);
+  const allEntities = metrics.allEntities || [];
+  const currentEntity = entityFilter === 'all' ? '전체 법인' : entityFilter;
+
+  const resetAll = () => setData({ accounts: [], transactions: [], plans: [] });
+
+  if (!loaded) return <div style={{ padding: 40, color: COLOR.textDim }}>Loading...</div>;
+
+  const hasData = data.accounts.length > 0 || data.transactions.length > 0 || data.plans.length > 0;
+
+  return (
+    <div style={{ background: COLOR.bg, color: COLOR.text, minHeight: '100vh' }}>
+      <div style={{ maxWidth: 1400, margin: '0 auto', padding: '24px' }}>
+        <header className="flex items-center justify-between mb-6 gap-4 flex-wrap">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${COLOR.gold}, ${COLOR.goldHi})` }}>
+              <DollarSign size={20} style={{ color: '#fff' }} strokeWidth={2.5} />
+            </div>
+            <div>
+              <div style={{ fontFamily: 'var(--serif)', fontStyle: 'italic', fontSize: '22px', color: COLOR.text, letterSpacing: '-0.01em' }}>Treasury</div>
+              <div className="text-xs" style={{ color: COLOR.textMute, letterSpacing: '0.1em' }}>
+                그룹 통합 자금관리 · {allEntities.length > 0 ? `${allEntities.length}개 법인` : '데이터 없음'}
+              </div>
+            </div>
+          </div>
+          {allEntities.length > 0 && (
+            <div className="flex items-center gap-3 flex-wrap">
+              {accessToken && (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px]"
+                     style={{ background: `${COLOR.success}14`, color: COLOR.success, border: `1px solid ${COLOR.success}40` }}>
+                  <Cloud size={11} /> Drive 연결됨
+                </div>
+              )}
+              <div style={{ position: 'relative' }}>
+                <button onClick={() => setEntityMenuOpen(v => !v)} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm"
+                        style={{ background: COLOR.surfaceEl, border: `1px solid ${COLOR.border}`, color: COLOR.text }}>
+                  <Building2 size={14} style={{ color: COLOR.gold }} />{currentEntity}<ChevronDown size={14} style={{ color: COLOR.textDim }} />
+                </button>
+                {entityMenuOpen && (
+                  <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: 4, zIndex: 20, minWidth: 220, background: COLOR.surfaceEl, border: `1px solid ${COLOR.borderHi}`, borderRadius: 8, overflow: 'hidden', boxShadow: '0 10px 30px rgba(0,0,0,0.4)' }}>
+                    <button onClick={() => { setEntityFilter('all'); setEntityMenuOpen(false); }}
+                            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 16px', fontSize: 14, background: 'transparent', color: entityFilter === 'all' ? COLOR.gold : COLOR.text }}>전체 법인</button>
+                    <div style={{ height: 1, background: COLOR.border }} />
+                    {allEntities.map(e => (
+                      <button key={e} onClick={() => { setEntityFilter(e); setEntityMenuOpen(false); }}
+                              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 16px', fontSize: 14, background: 'transparent', color: entityFilter === e ? COLOR.gold : COLOR.text }}>
+                        {e}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </header>
+
+        <nav className="flex gap-1 mb-6 p-1 rounded-xl" style={{ background: COLOR.surface, border: `1px solid ${COLOR.border}`, display: 'inline-flex', flexWrap: 'wrap' }}>
+          <TabButton active={tab === 'dashboard'} onClick={() => setTab('dashboard')} icon={LayoutDashboard}>대시보드</TabButton>
+          <TabButton active={tab === 'accounts'} onClick={() => setTab('accounts')} icon={Wallet}>계좌</TabButton>
+          <TabButton active={tab === 'transactions'} onClick={() => setTab('transactions')} icon={Receipt}>입출금</TabButton>
+          <TabButton active={tab === 'plans'} onClick={() => setTab('plans')} icon={CalendarIcon}>자금계획</TabButton>
+          <TabButton active={tab === 'categories'} onClick={() => setTab('categories')} icon={FilterIcon}>분류 분석</TabButton>
+          <TabButton active={tab === 'import'} onClick={() => setTab('import')} icon={Upload}>데이터 가져오기</TabButton>
+        </nav>
+
+        <main>
+          {!hasData && tab !== 'import' && (
+            <Card className="p-12 text-center">
+              <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: `${COLOR.gold}18`, color: COLOR.gold }}>
+                <Upload size={28} />
+              </div>
+              <div className="text-lg font-semibold mb-2" style={{ color: COLOR.text }}>데이터가 없습니다</div>
+              <div className="text-sm mb-6" style={{ color: COLOR.textDim }}>먼저 "데이터 가져오기" 탭에서 CSV 파일을 업로드하세요.</div>
+              <button onClick={() => setTab('import')} className="px-5 py-2.5 rounded-lg text-sm font-semibold"
+                      style={{ background: COLOR.gold, color: '#fff' }}>
+                데이터 가져오기로 이동
+              </button>
+            </Card>
+          )}
+
+          {hasData && tab === 'dashboard'    && <DashboardView    metrics={metrics} planTypeChoice={planTypeChoice} setPlanTypeChoice={setPlanTypeChoice} planYearFilter={planYearFilter} setPlanYearFilter={setPlanYearFilter} actualizedMonths={actualizedMonths} setActualizedMonths={setActualizedMonths} />}
+          {hasData && tab === 'accounts'     && <AccountsView     metrics={metrics} />}
+          {hasData && tab === 'transactions' && <TransactionsView metrics={metrics} />}
+          {hasData && tab === 'plans'        && <PlansView        metrics={metrics} />}
+          {hasData && tab === 'categories'   && <CategoryAnalysisView metrics={metrics} />}
+          {tab === 'import'                  && <ImportView
+            data={data} setData={setData} onReset={resetAll}
+            driveSettings={driveSettings} setDriveSettings={setDriveSettings}
+            accessToken={accessToken} setAccessToken={setAccessToken}
+            tokenClient={tokenClient} setTokenClient={setTokenClient}
+          />}
+        </main>
+
+        <footer className="mt-8 pt-6 text-xs flex items-center justify-between" style={{ color: COLOR.textMute, borderTop: `1px solid ${COLOR.border}` }}>
+          <div>데이터는 이 브라우저의 localStorage에 저장됩니다.</div>
+          <div style={{ fontFamily: 'var(--mono)' }}>{new Date().toISOString().slice(0, 10)}</div>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+document.getElementById('loading').style.display = 'none';
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<FinanceDashboard />);
+</script>
+</body>
+</html>
