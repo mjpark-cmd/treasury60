@@ -677,6 +677,21 @@ function calcMetrics(data, entityFilter, planTypeChoice = '전체계획', actual
     actualMonthlyFinancial[k].net += t.amount;
   });
 
+  // === 실적 월별 (순수자금 시뮬레이션용) — 순수자금 플래그 계좌 + 한도약정(≥0) 거래만 ===
+  // pureFundsOpening과 관점을 일치시켜서 월별 누적 잔액 = 자금현황 순수자금이 되도록
+  const pureFundAccountNumbers = new Set(
+    balances.filter(b => b.isPure || b.accountType === '한도약정계좌').map(b => b.number)
+  );
+  const actualMonthlyPure = {};
+  filteredTxs.forEach(t => {
+    if (!pureFundAccountNumbers.has(t.accountNumber)) return;
+    const k = t.date.slice(0, 7);
+    if (!actualMonthlyPure[k]) actualMonthlyPure[k] = { month: k, inflow: 0, outflow: 0, net: 0 };
+    actualMonthlyPure[k].inflow += t.inflow;
+    actualMonthlyPure[k].outflow += t.outflow;
+    actualMonthlyPure[k].net += t.amount;
+  });
+
   // === 계획 월별 집계 (planTypeChoice 적용, 식스티만 확정계획 선택 가능) ===
   const planRelevant = filteredPlans.filter(p => {
     if (p.entity === '식스티헤르츠') return p.planType === planTypeChoice;
@@ -701,8 +716,11 @@ function calcMetrics(data, entityFilter, planTypeChoice = '전체계획', actual
     const userChecked = actualizedMonths.has(month);
     const isActualized = userChecked;
     const source = isActualized ? '실적' : '계획';
-    const row = isActualized ? (actualMonthly[month] || { inflow: 0, outflow: 0, net: 0 })
-                             : (planMonthly[month] || { inflow: 0, outflow: 0, net: 0 });
+    // ⭐ 실적 월은 순수자금 관점 거래(actualMonthlyPure)를 쓴다.
+    //    자금현황의 "순수자금 계"와 누적 잔액이 일치하도록 한도약정(음수) 거래만 선별 반영
+    const row = isActualized
+      ? (actualMonthlyPure[month] || { inflow: 0, outflow: 0, net: 0 })
+      : (planMonthly[month] || { inflow: 0, outflow: 0, net: 0 });
     return {
       month,
       source,
@@ -711,6 +729,7 @@ function calcMetrics(data, entityFilter, planTypeChoice = '전체계획', actual
       inflow: row.inflow || 0,
       outflow: row.outflow || 0,
       net: row.net || 0,
+      // 표시용 참고값 (원래 전체 실적/계획)
       actualInflow: actualMonthly[month]?.inflow || 0,
       actualOutflow: actualMonthly[month]?.outflow || 0,
       actualNet: actualMonthly[month]?.net || 0,
@@ -3410,6 +3429,8 @@ function FinanceDashboard() {
   const [driveSettings, setDriveSettings] = useState(DEFAULT_DRIVE);
   const [accessToken, setAccessToken] = useState(null); // session only (never persisted)
   const [tokenClient, setTokenClient] = useState(null);
+  // 자동 silent 로그인 시도 중 상태 (UI에 "연결 중..." 표시용)
+  const [autoConnecting, setAutoConnecting] = useState(false);
 
   useEffect(() => {
     try {
@@ -3476,53 +3497,70 @@ function FinanceDashboard() {
     if (autoSyncAttempted.current) return;
     if (!driveSettings.clientId || !driveSettings.spreadsheetUrl) return;
     if (accessToken) return;
-    if (!window.google?.accounts?.oauth2) return;
 
-    autoSyncAttempted.current = true;
+    // GIS가 아직 로드 안 됐으면 짧게 기다렸다가 재시도 (최대 5초)
+    const trySilentLogin = (retryCount = 0) => {
+      if (!window.google?.accounts?.oauth2) {
+        if (retryCount >= 10) return; // 포기
+        setTimeout(() => trySilentLogin(retryCount + 1), 500);
+        return;
+      }
 
-    // Silent 토큰 요청 (prompt: 'none')
-    try {
-      const silentClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: driveSettings.clientId,
-        scope: OAUTH_SCOPE,
-        callback: async (response) => {
-          if (response.error || !response.access_token) {
-            // Silent 실패 = 사용자가 직접 "Drive 연결" 눌러야 함 (정상)
-            return;
-          }
-          setAccessToken(response.access_token);
-          // 자동 동기화 실행
-          const ssid = extractSpreadsheetId(driveSettings.spreadsheetUrl);
-          if (!ssid) return;
-          try {
-            const [accArr, txArr, planArr, settingsArr] = await Promise.all([
-              fetchSheetArray(ssid, driveSettings.tabs.accounts, response.access_token),
-              fetchSheetArray(ssid, driveSettings.tabs.transactions, response.access_token),
-              fetchSheetArray(ssid, driveSettings.tabs.plans, response.access_token),
-              fetchSheetArray(ssid, driveSettings.tabs.settings || '설정', response.access_token).catch(() => []),
-            ]);
-            const accHR = sheetArrayToRowsWithHeaders(accArr);
-            const txHR = sheetArrayToRowsWithHeaders(txArr);
-            const planHR = sheetArrayToRowsWithHeaders(planArr);
-            const accounts = parseAccountsFile(accHR.headers, accHR.rows);
-            const transactions = parseActualsFile(txHR.headers, txHR.rows);
-            const plans = parsePlansFile(planHR.headers, planHR.rows);
-            const parsedSettings = parseTeamSettings(settingsArr);
-            setData({ accounts, transactions, plans });
-            try { localStorage.setItem('finance:v2:teamSettings', JSON.stringify(parsedSettings)); } catch {}
-            setTeamSettings(parsedSettings);
-            const now = new Date().toISOString();
-            try { localStorage.setItem('finance:v2:lastSync', now); } catch {}
-          } catch (e) {
-            // 자동 동기화 실패해도 UI 에러 표시 안 함 (사용자가 수동으로 다시 시도 가능)
-            console.warn('Auto-sync failed:', e.message);
-          }
-        },
-      });
-      silentClient.requestAccessToken({ prompt: 'none' });
-    } catch (e) {
-      // GIS 초기화 실패 = 수동 로그인 필요
-    }
+      autoSyncAttempted.current = true;
+      setAutoConnecting(true);
+
+      // 7초 타임아웃 - silent 로그인이 너무 오래 걸리면 포기
+      const timeoutId = setTimeout(() => setAutoConnecting(false), 7000);
+
+      try {
+        const silentClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: driveSettings.clientId,
+          scope: OAUTH_SCOPE,
+          callback: async (response) => {
+            clearTimeout(timeoutId);
+            if (response.error || !response.access_token) {
+              // Silent 실패 = 사용자가 직접 "Drive 연결" 눌러야 함 (정상)
+              setAutoConnecting(false);
+              return;
+            }
+            setAccessToken(response.access_token);
+            // 자동 동기화 실행
+            const ssid = extractSpreadsheetId(driveSettings.spreadsheetUrl);
+            if (!ssid) { setAutoConnecting(false); return; }
+            try {
+              const [accArr, txArr, planArr, settingsArr] = await Promise.all([
+                fetchSheetArray(ssid, driveSettings.tabs.accounts, response.access_token),
+                fetchSheetArray(ssid, driveSettings.tabs.transactions, response.access_token),
+                fetchSheetArray(ssid, driveSettings.tabs.plans, response.access_token),
+                fetchSheetArray(ssid, driveSettings.tabs.settings || '설정', response.access_token).catch(() => []),
+              ]);
+              const accHR = sheetArrayToRowsWithHeaders(accArr);
+              const txHR = sheetArrayToRowsWithHeaders(txArr);
+              const planHR = sheetArrayToRowsWithHeaders(planArr);
+              const accounts = parseAccountsFile(accHR.headers, accHR.rows);
+              const transactions = parseActualsFile(txHR.headers, txHR.rows);
+              const plans = parsePlansFile(planHR.headers, planHR.rows);
+              const parsedSettings = parseTeamSettings(settingsArr);
+              setData({ accounts, transactions, plans });
+              try { localStorage.setItem('finance:v2:teamSettings', JSON.stringify(parsedSettings)); } catch {}
+              setTeamSettings(parsedSettings);
+              const now = new Date().toISOString();
+              try { localStorage.setItem('finance:v2:lastSync', now); } catch {}
+            } catch (e) {
+              console.warn('Auto-sync failed:', e.message);
+            } finally {
+              setAutoConnecting(false);
+            }
+          },
+        });
+        silentClient.requestAccessToken({ prompt: 'none' });
+      } catch (e) {
+        clearTimeout(timeoutId);
+        setAutoConnecting(false);
+      }
+    };
+
+    trySilentLogin();
   }, [loaded, driveSettings.clientId, driveSettings.spreadsheetUrl]);
 
   // ⭐ 마감월 기준 실적 반영 월 자동 계산
@@ -3578,12 +3616,17 @@ function FinanceDashboard() {
           </div>
           {allEntities.length > 0 && (
             <div className="flex items-center gap-3 flex-wrap">
-              {accessToken && (
+              {accessToken ? (
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px]"
                      style={{ background: `${COLOR.success}14`, color: COLOR.success, border: `1px solid ${COLOR.success}40` }}>
                   <Cloud size={11} /> Drive 연결됨
                 </div>
-              )}
+              ) : autoConnecting ? (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px]"
+                     style={{ background: `${COLOR.gold}14`, color: COLOR.gold, border: `1px solid ${COLOR.gold}40` }}>
+                  <Spinner size={10} /> Drive 연결 중...
+                </div>
+              ) : null}
               <div style={{ position: 'relative' }}>
                 <button onClick={() => setEntityMenuOpen(v => !v)} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm"
                         style={{ background: COLOR.surfaceEl, border: `1px solid ${COLOR.border}`, color: COLOR.text }}>
