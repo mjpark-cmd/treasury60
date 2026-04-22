@@ -795,10 +795,14 @@ function calcMetrics(data, entityFilter, planTypeChoice = '전체계획', actual
   };
 
   // 실적 기준 월별 series (차트용)
-  const monthlySeries = Object.values(actualMonthly).sort((a, b) => a.month.localeCompare(b.month));
+  // 자금 변동 추이 차트용: 순수자금 관점 월별 집계
+  // (actualMonthly는 한도약정 포함 전체 → cumulativeSeries 시작값과 불일치)
+  const monthlySeries = Object.values(actualMonthlyPure).sort((a, b) => a.month.localeCompare(b.month));
   const monthlySeriesFinancial = Object.values(actualMonthlyFinancial).sort((a, b) => a.month.localeCompare(b.month));
+  // 넷번 계산용은 전체 실적(한도약정 포함) 그대로 필요 - 평균 계산 목적
+  const monthlySeriesAll = Object.values(actualMonthly).sort((a, b) => a.month.localeCompare(b.month));
 
-  // 누적 자금 변동 (실적 기준) - 기초 순수자금부터 시작
+  // 누적 자금 변동 (순수자금 관점) - 기초 순수자금부터 시작 → 현재 순수자금과 일치
   let cum = pureFundsOpening;
   const cumulativeSeries = [
     // 맨 앞에 "기초" 행 추가
@@ -810,9 +814,10 @@ function calcMetrics(data, entityFilter, planTypeChoice = '전체계획', actual
   ];
 
   // 1) 실적 기준: 체크된 월만 (또는 체크 없으면 모든 실적 월)
+  // 넷번 평균 계산은 전체 실적 기준이 의미 있음 (한도약정은 평균 넷번에 중요)
   const actualBurnRows = useMonthFilter
-    ? monthlySeries.filter(m => actualizedMonths.has(m.month))
-    : monthlySeries;
+    ? monthlySeriesAll.filter(m => actualizedMonths.has(m.month))
+    : monthlySeriesAll;
   const actualBurnRowsFinancial = useMonthFilter
     ? monthlySeriesFinancial.filter(m => actualizedMonths.has(m.month))
     : monthlySeriesFinancial;
@@ -822,8 +827,10 @@ function calcMetrics(data, entityFilter, planTypeChoice = '전체계획', actual
   // 체크된 월 = 실적, 나머지 = 계획 (planType에 따라 전체/확정)
   // 연도 필터 적용
   // useFinancialActual: 재무제표 전용 여부 (실적월에서 한도약정 거래 제외)
+  // ⭐ 순수자금 관점: 실적 월은 actualMonthlyPure (순수자금 계좌만)를 기본 사용
+  //   → 자금현황의 "순수자금 계"와 월별 누적 잔액이 일치
   const buildMergedRunwayRows = (planMonthsAgg, useFinancialActual = false) => {
-    const actualSource = useFinancialActual ? actualMonthlyFinancial : actualMonthly;
+    const actualSource = useFinancialActual ? actualMonthlyFinancial : actualMonthlyPure;
     const relevantMonths = new Set();
     Object.keys(planMonthsAgg).forEach(m => relevantMonths.add(m));
     Object.keys(actualSource).forEach(m => {
@@ -1757,9 +1764,9 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
               </div>
             )}
           </div>
-          <div className="overflow-x-auto" style={{ maxHeight: 280, overflowY: 'auto' }}>
+          <div className="overflow-x-auto" style={{ maxHeight: 320, overflowY: 'auto' }}>
             <table className="w-full text-xs">
-              <thead style={{ position: 'sticky', top: 0, background: COLOR.surfaceEl }}>
+              <thead style={{ position: 'sticky', top: 0, background: COLOR.surfaceEl, zIndex: 1 }}>
                 <tr>
                   <th className="px-3 py-2 text-left" style={{ color: COLOR.textMute }}>월</th>
                   <th className="px-3 py-2 text-center" style={{ color: COLOR.textMute, width: 60 }}>구분</th>
@@ -1768,9 +1775,24 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
                   <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>계획 입금</th>
                   <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>계획 출금</th>
                   <th className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>적용 순증감</th>
+                  <th className="px-3 py-2 text-right" style={{ color: COLOR.gold, fontWeight: 500 }}>누적 잔액</th>
                 </tr>
               </thead>
               <tbody>
+                {/* 기초 행 (순수자금 시작값) */}
+                <tr style={{ background: COLOR.bg }}>
+                  <td className="px-3 py-2" style={{ color: COLOR.textDim, fontFamily: 'var(--mono)', fontStyle: 'italic' }}>기초</td>
+                  <td className="px-3 py-2 text-center" style={{ color: COLOR.textMute, fontSize: 10 }}>시작값</td>
+                  <td className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>—</td>
+                  <td className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>—</td>
+                  <td className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>—</td>
+                  <td className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>—</td>
+                  <td className="px-3 py-2 text-right" style={{ color: COLOR.textMute }}>—</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold"
+                      style={{ fontFamily: 'var(--mono)', color: pureFundsOpening >= 0 ? COLOR.gold : COLOR.danger }}>
+                    {formatCompactKRW(pureFundsOpening)}
+                  </td>
+                </tr>
                 {mergedMonthly.filter(m => !m.isOpening).map(m => {
                   const isActualized = m.isActualized;
                   return (
@@ -1804,11 +1826,15 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
                       <td className="px-3 py-2 text-right tabular-nums font-medium" style={{ fontFamily: 'var(--mono)', color: m.net >= 0 ? COLOR.success : COLOR.danger }}>
                         {formatCompactKRW(m.net)}
                       </td>
+                      <td className="px-3 py-2 text-right tabular-nums font-semibold"
+                          style={{ fontFamily: 'var(--mono)', color: m.cumulativeBalance < 0 ? COLOR.danger : COLOR.gold }}>
+                        {formatCompactKRW(m.cumulativeBalance)}
+                      </td>
                     </tr>
                   );
                 })}
                 {mergedMonthly.filter(m => !m.isOpening).length === 0 && (
-                  <tr><td colSpan="7" className="px-3 py-6 text-center" style={{ color: COLOR.textMute }}>데이터 없음</td></tr>
+                  <tr><td colSpan="8" className="px-3 py-6 text-center" style={{ color: COLOR.textMute }}>데이터 없음</td></tr>
                 )}
               </tbody>
             </table>
