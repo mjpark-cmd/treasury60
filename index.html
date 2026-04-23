@@ -881,10 +881,16 @@ function calcMetrics(data, entityFilter, planTypeChoice = '전체계획', actual
   // useFinancialActual: 재무제표 전용 여부 (실적월에서 한도약정 거래 제외)
   // ⭐ 순수자금 관점: 실적 월은 actualMonthlyPure (순수자금 계좌만)를 기본 사용
   //   → 자금현황의 "순수자금 계"와 월별 누적 잔액이 일치
+  // ⭐ 연도 필터: planYearFilter가 '2026'이면 실적/계획 모두 2026년 월만 포함
+  //   → 전체계획이 2027년까지 있어도 2026년 평균만 계산되어 넷번이 정확
   const buildMergedRunwayRows = (planMonthsAgg, useFinancialActual = false) => {
     const actualSource = useFinancialActual ? actualMonthlyFinancial : actualMonthlyPure;
     const relevantMonths = new Set();
-    Object.keys(planMonthsAgg).forEach(m => relevantMonths.add(m));
+    // 계획 월도 연도 필터 명시적 적용 (상위에서 필터링 했지만 안전장치)
+    Object.keys(planMonthsAgg).forEach(m => {
+      if (planYearFilter === 'all' || m.startsWith(planYearFilter)) relevantMonths.add(m);
+    });
+    // 실적 월 연도 필터 적용
     Object.keys(actualSource).forEach(m => {
       if (planYearFilter === 'all' || m.startsWith(planYearFilter)) relevantMonths.add(m);
     });
@@ -1125,23 +1131,83 @@ function ResetFiltersButton({ onClick }) {
 // ============================================================================
 function RawTable({ headers, rows, extraColumns = [], maxHeight = 560, colSpan }) {
   const totalCols = headers.length + extraColumns.length;
+  const [sortKey, setSortKey] = useState(null);
+  const [sortDir, setSortDir] = useState('asc'); // 'asc' | 'desc'
+
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      // 같은 컬럼 클릭: asc → desc → 해제
+      if (sortDir === 'asc') setSortDir('desc');
+      else { setSortKey(null); setSortDir('asc'); }
+    } else {
+      setSortKey(key); setSortDir('asc');
+    }
+  };
+
+  // 정렬된 행
+  const sortedRows = useMemo(() => {
+    if (!sortKey) return rows;
+    const parseNum = (v) => {
+      if (v == null) return null;
+      const cleaned = String(v).replace(/[,\s₩\$]/g, '').replace(/%/g, '');
+      const n = parseFloat(cleaned);
+      return isNaN(n) ? null : n;
+    };
+    const arr = [...rows];
+    arr.sort((a, b) => {
+      // extra column 여부
+      const extraCol = extraColumns.find(c => c.key === sortKey);
+      let va, vb;
+      if (extraCol) {
+        // extra column은 render 결과 기반 숫자 비교 (sortValue가 있으면 쓰고, 없으면 원본)
+        va = extraCol.sortValue ? extraCol.sortValue(a) : extraCol.render(a);
+        vb = extraCol.sortValue ? extraCol.sortValue(b) : extraCol.render(b);
+      } else {
+        va = a._raw?.[sortKey] ?? '';
+        vb = b._raw?.[sortKey] ?? '';
+      }
+      // 숫자 시도
+      const na = parseNum(va);
+      const nb = parseNum(vb);
+      let cmp;
+      if (na != null && nb != null) {
+        cmp = na - nb;
+      } else {
+        cmp = String(va).localeCompare(String(vb), 'ko');
+      }
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return arr;
+  }, [rows, sortKey, sortDir, extraColumns]);
+
+  const SortIcon = ({ active, dir }) => {
+    if (!active) return <span style={{ color: COLOR.textMute, fontSize: 9, marginLeft: 4, opacity: 0.5 }}>⇅</span>;
+    return <span style={{ color: COLOR.gold, fontSize: 10, marginLeft: 4 }}>{dir === 'asc' ? '▲' : '▼'}</span>;
+  };
+
   return (
     <div className="overflow-x-auto" style={{ maxHeight, overflowY: 'auto' }}>
       <table className="w-full text-sm">
         <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: COLOR.surfaceEl }}>
           <tr>
             {headers.map(h => (
-              <th key={h} className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap"
-                  style={{ color: COLOR.textMute, letterSpacing: '0.04em' }}>{h}</th>
+              <th key={h} onClick={() => handleSort(h)}
+                  className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap select-none"
+                  style={{ color: sortKey === h ? COLOR.text : COLOR.textMute, letterSpacing: '0.04em', cursor: 'pointer', userSelect: 'none' }}>
+                {h}<SortIcon active={sortKey === h} dir={sortDir} />
+              </th>
             ))}
             {extraColumns.map(c => (
-              <th key={c.key} className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap"
-                  style={{ color: COLOR.gold, letterSpacing: '0.04em' }}>{c.header} ✦</th>
+              <th key={c.key} onClick={() => handleSort(c.key)}
+                  className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap select-none"
+                  style={{ color: COLOR.gold, letterSpacing: '0.04em', cursor: 'pointer', userSelect: 'none' }}>
+                {c.header} ✦<SortIcon active={sortKey === c.key} dir={sortDir} />
+              </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => (
+          {sortedRows.map((row, i) => (
             <tr key={row.id || i} style={{ borderTop: `1px solid ${COLOR.border}` }}>
               {headers.map(h => {
                 const v = row._raw?.[h] ?? '';
@@ -1163,7 +1229,7 @@ function RawTable({ headers, rows, extraColumns = [], maxHeight = 560, colSpan }
               ))}
             </tr>
           ))}
-          {rows.length === 0 && (
+          {sortedRows.length === 0 && (
             <tr><td colSpan={colSpan || totalCols || 1} className="px-4 py-8 text-center" style={{ color: COLOR.textMute }}>데이터가 없습니다.</td></tr>
           )}
         </tbody>
@@ -2617,6 +2683,12 @@ function CategoryAnalysisView({ metrics }) {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [search, setSearch] = useState('');
+  const [sortKey, setSortKey] = useState('total'); // 기본: 합계 순
+  const [sortDir, setSortDir] = useState('desc');
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    else { setSortKey(key); setSortDir(key === 'counterpart' ? 'asc' : 'desc'); }
+  };
 
   // 자금이동 제외 + 기간 필터
   const relevantTxs = useMemo(() => {
@@ -2659,8 +2731,24 @@ function CategoryAnalysisView({ metrics }) {
       const s = search.toLowerCase();
       rows = rows.filter(r => r.counterpart.toLowerCase().includes(s));
     }
-    return rows.sort((a, b) => b.total - a.total);
-  }, [relevantTxs, selectedCategory, direction, search]);
+    // 정렬 적용
+    rows.sort((a, b) => {
+      let va, vb;
+      switch (sortKey) {
+        case 'counterpart': va = a.counterpart; vb = b.counterpart; break;
+        case 'total': va = a.total; vb = b.total; break;
+        case 'count': va = a.count; vb = b.count; break;
+        case 'avg': va = a.total / a.count; vb = b.total / b.count; break;
+        case 'lastDate': va = a.lastDate || ''; vb = b.lastDate || ''; break;
+        default: va = a.total; vb = b.total;
+      }
+      let cmp;
+      if (typeof va === 'number' && typeof vb === 'number') cmp = va - vb;
+      else cmp = String(va).localeCompare(String(vb), 'ko');
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return rows;
+  }, [relevantTxs, selectedCategory, direction, search, sortKey, sortDir]);
 
   const grandTotal = counterpartRows.reduce((s, r) => s + r.total, 0);
   const grandCount = counterpartRows.reduce((s, r) => s + r.count, 0);
@@ -2791,13 +2879,33 @@ function CategoryAnalysisView({ metrics }) {
             <thead style={{ position: 'sticky', top: 0, zIndex: 1, background: COLOR.surfaceEl }}>
               <tr>
                 <th className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute, width: 48 }}>순위</th>
-                <th className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute }}>거래처</th>
-                <th className="px-3 py-3 text-right text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute }}>{directionLabel} 합계</th>
+                <th onClick={() => toggleSort('counterpart')}
+                    className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap select-none"
+                    style={{ color: sortKey === 'counterpart' ? COLOR.text : COLOR.textMute, cursor: 'pointer', userSelect: 'none' }}>
+                  거래처{sortKey === 'counterpart' ? <span style={{ color: COLOR.gold, marginLeft: 4 }}>{sortDir === 'asc' ? '▲' : '▼'}</span> : <span style={{ color: COLOR.textMute, fontSize: 9, marginLeft: 4, opacity: 0.5 }}>⇅</span>}
+                </th>
+                <th onClick={() => toggleSort('total')}
+                    className="px-3 py-3 text-right text-xs font-medium whitespace-nowrap select-none"
+                    style={{ color: sortKey === 'total' ? COLOR.text : COLOR.textMute, cursor: 'pointer', userSelect: 'none' }}>
+                  {directionLabel} 합계{sortKey === 'total' ? <span style={{ color: COLOR.gold, marginLeft: 4 }}>{sortDir === 'asc' ? '▲' : '▼'}</span> : <span style={{ color: COLOR.textMute, fontSize: 9, marginLeft: 4, opacity: 0.5 }}>⇅</span>}
+                </th>
                 <th className="px-3 py-3 text-right text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute }}>비중</th>
-                <th className="px-3 py-3 text-right text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute }}>건수</th>
-                <th className="px-3 py-3 text-right text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute }}>평균</th>
+                <th onClick={() => toggleSort('count')}
+                    className="px-3 py-3 text-right text-xs font-medium whitespace-nowrap select-none"
+                    style={{ color: sortKey === 'count' ? COLOR.text : COLOR.textMute, cursor: 'pointer', userSelect: 'none' }}>
+                  건수{sortKey === 'count' ? <span style={{ color: COLOR.gold, marginLeft: 4 }}>{sortDir === 'asc' ? '▲' : '▼'}</span> : <span style={{ color: COLOR.textMute, fontSize: 9, marginLeft: 4, opacity: 0.5 }}>⇅</span>}
+                </th>
+                <th onClick={() => toggleSort('avg')}
+                    className="px-3 py-3 text-right text-xs font-medium whitespace-nowrap select-none"
+                    style={{ color: sortKey === 'avg' ? COLOR.text : COLOR.textMute, cursor: 'pointer', userSelect: 'none' }}>
+                  평균{sortKey === 'avg' ? <span style={{ color: COLOR.gold, marginLeft: 4 }}>{sortDir === 'asc' ? '▲' : '▼'}</span> : <span style={{ color: COLOR.textMute, fontSize: 9, marginLeft: 4, opacity: 0.5 }}>⇅</span>}
+                </th>
                 {selectedCategory === 'all' && <th className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute }}>주요 분류</th>}
-                <th className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute }}>최근 거래</th>
+                <th onClick={() => toggleSort('lastDate')}
+                    className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap select-none"
+                    style={{ color: sortKey === 'lastDate' ? COLOR.text : COLOR.textMute, cursor: 'pointer', userSelect: 'none' }}>
+                  최근 거래{sortKey === 'lastDate' ? <span style={{ color: COLOR.gold, marginLeft: 4 }}>{sortDir === 'asc' ? '▲' : '▼'}</span> : <span style={{ color: COLOR.textMute, fontSize: 9, marginLeft: 4, opacity: 0.5 }}>⇅</span>}
+                </th>
               </tr>
             </thead>
             <tbody>
