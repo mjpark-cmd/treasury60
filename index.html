@@ -2701,6 +2701,12 @@ function CategoryAnalysisView({ metrics }) {
     return list;
   }, [metrics.filteredTransactions, startDate, endDate, direction]);
 
+  // 전체 법인 보기 여부 (법인 종류가 2개 이상이면 전체법인 모드)
+  const isAllEntities = useMemo(() => {
+    const entities = new Set(relevantTxs.map(t => t.entity).filter(Boolean));
+    return entities.size > 1;
+  }, [relevantTxs]);
+
   // 사용 가능한 분류 목록 (현재 direction 기준)
   const availableCategories = useMemo(() => {
     const cats = {};
@@ -2719,14 +2725,26 @@ function CategoryAnalysisView({ metrics }) {
     const agg = {};
     list.forEach(t => {
       const cp = t.counterpart || '(미지정)';
-      if (!agg[cp]) agg[cp] = { counterpart: cp, total: 0, count: 0, lastDate: '', firstDate: '', categories: new Set() };
-      agg[cp].total += (direction === 'in' ? t.inflow : t.outflow);
+      if (!agg[cp]) agg[cp] = { counterpart: cp, total: 0, count: 0, lastDate: '', firstDate: '', categories: new Set(), entities: {} };
+      const amt = (direction === 'in' ? t.inflow : t.outflow);
+      agg[cp].total += amt;
       agg[cp].count += 1;
       if (t.date > agg[cp].lastDate) agg[cp].lastDate = t.date;
       if (!agg[cp].firstDate || t.date < agg[cp].firstDate) agg[cp].firstDate = t.date;
       agg[cp].categories.add(t.category || '(미분류)');
+      // 법인별 금액 집계 (전체법인 선택 시 어느 법인인지 표시용)
+      const ent = t.entity || '(미지정)';
+      if (!agg[cp].entities[ent]) agg[cp].entities[ent] = { total: 0, count: 0 };
+      agg[cp].entities[ent].total += amt;
+      agg[cp].entities[ent].count += 1;
     });
-    let rows = Object.values(agg).map(r => ({ ...r, categoryList: [...r.categories] }));
+    let rows = Object.values(agg).map(r => {
+      // entities 객체를 "금액 많은 순 배열"로 변환
+      const entityList = Object.entries(r.entities)
+        .map(([name, v]) => ({ name, total: v.total, count: v.count }))
+        .sort((a, b) => b.total - a.total);
+      return { ...r, categoryList: [...r.categories], entityList };
+    });
     if (search) {
       const s = search.toLowerCase();
       rows = rows.filter(r => r.counterpart.toLowerCase().includes(s));
@@ -2757,17 +2775,21 @@ function CategoryAnalysisView({ metrics }) {
 
   const handleExport = () => {
     const label = direction === 'in' ? '입금' : '출금';
-    const rows = counterpartRows.map(r => ({
-      '거래처': r.counterpart,
-      '분류': r.categoryList.join(', '),
-      [`${label}합계`]: r.total,
-      '건수': r.count,
-      '최초거래일': r.firstDate,
-      '마지막거래일': r.lastDate,
-    }));
+    const rows = counterpartRows.map(r => {
+      const entityStr = r.entityList.map(e => `${e.name}(${e.total.toLocaleString()})`).join(' / ');
+      return {
+        '거래처': r.counterpart,
+        '법인': entityStr,
+        '분류': r.categoryList.join(', '),
+        [`${label}합계`]: r.total,
+        '건수': r.count,
+        '최초거래일': r.firstDate,
+        '마지막거래일': r.lastDate,
+      };
+    });
     const catPart = selectedCategory === 'all' ? '전체' : selectedCategory;
     exportCSV(`거래처분석_${label}_${catPart}_${new Date().toISOString().slice(0,10)}.csv`, rows,
-      ['거래처', '분류', `${label}합계`, '건수', '최초거래일', '마지막거래일']);
+      ['거래처', '법인', '분류', `${label}합계`, '건수', '최초거래일', '마지막거래일']);
   };
 
   const accentColor = direction === 'in' ? COLOR.success : COLOR.danger;
@@ -2884,6 +2906,11 @@ function CategoryAnalysisView({ metrics }) {
                     style={{ color: sortKey === 'counterpart' ? COLOR.text : COLOR.textMute, cursor: 'pointer', userSelect: 'none' }}>
                   거래처{sortKey === 'counterpart' ? <span style={{ color: COLOR.gold, marginLeft: 4 }}>{sortDir === 'asc' ? '▲' : '▼'}</span> : <span style={{ color: COLOR.textMute, fontSize: 9, marginLeft: 4, opacity: 0.5 }}>⇅</span>}
                 </th>
+                {isAllEntities && (
+                  <th className="px-3 py-3 text-left text-xs font-medium whitespace-nowrap" style={{ color: COLOR.textMute }}>
+                    법인
+                  </th>
+                )}
                 <th onClick={() => toggleSort('total')}
                     className="px-3 py-3 text-right text-xs font-medium whitespace-nowrap select-none"
                     style={{ color: sortKey === 'total' ? COLOR.text : COLOR.textMute, cursor: 'pointer', userSelect: 'none' }}>
@@ -2915,6 +2942,27 @@ function CategoryAnalysisView({ metrics }) {
                   <tr key={i} style={{ borderTop: `1px solid ${COLOR.border}` }}>
                     <td className="px-3 py-2.5 tabular-nums" style={{ color: COLOR.textDim, fontFamily: 'var(--mono)', fontSize: 11 }}>{i + 1}</td>
                     <td className="px-3 py-2.5 font-medium" style={{ color: COLOR.text }}>{r.counterpart}</td>
+                    {isAllEntities && (
+                      <td className="px-3 py-2.5" style={{ color: COLOR.textDim, fontSize: 11, maxWidth: 220 }}>
+                        {r.entityList.length === 1 ? (
+                          <span style={{ color: COLOR.text }}>{r.entityList[0].name}</span>
+                        ) : (
+                          <span title={r.entityList.map(e => `${e.name}: ${formatCompactKRW(e.total)} (${e.count}건)`).join(' / ')}>
+                            {r.entityList.slice(0, 2).map(e => (
+                              <span key={e.name} className="inline-block mr-1.5 mb-0.5 text-[10px] px-1.5 py-0.5 rounded"
+                                    style={{ background: COLOR.surfaceEl, color: COLOR.textDim, border: `1px solid ${COLOR.border}` }}>
+                                {e.name} <b style={{ color: accentColor, fontFamily: 'var(--mono)' }}>{formatCompactKRW(e.total)}</b>
+                              </span>
+                            ))}
+                            {r.entityList.length > 2 && (
+                              <span className="text-[10px]" style={{ color: COLOR.textMute }}>
+                                외 {r.entityList.length - 2}개
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </td>
+                    )}
                     <td className="px-3 py-2.5 text-right tabular-nums font-semibold whitespace-nowrap" style={{ fontFamily: 'var(--mono)', color: accentColor }}>
                       {formatKRW(r.total)}
                     </td>
@@ -2946,7 +2994,7 @@ function CategoryAnalysisView({ metrics }) {
                 );
               })}
               {counterpartRows.length === 0 && (
-                <tr><td colSpan={selectedCategory === 'all' ? 8 : 7} className="px-4 py-8 text-center" style={{ color: COLOR.textMute }}>
+                <tr><td colSpan={(selectedCategory === 'all' ? 8 : 7) + (isAllEntities ? 1 : 0)} className="px-4 py-8 text-center" style={{ color: COLOR.textMute }}>
                   조건에 맞는 거래처가 없습니다.
                 </td></tr>
               )}
