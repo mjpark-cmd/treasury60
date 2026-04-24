@@ -2344,7 +2344,24 @@ function TransactionsView({ metrics }) {
 
   // 거래일 기준 오름차순 정렬 후 누적 잔액 계산 (항상 과거부터 누적)
   const withBalance = useMemo(() => {
-    const asc = [...filtered].sort((a, b) => a.date.localeCompare(b.date));
+    // 정렬 규칙:
+    // 1. 거래일 오름차순 (과거 → 미래)
+    // 2. 같은 일자 내: 입금(amount > 0) 먼저, 출금(amount < 0) 나중
+    //    → 일자별 잔액 계산 시 출금이 먼저 반영되어 일시적 (-)로 표기되는 문제 방지
+    // 3. 같은 날 + 같은 방향: 원본 순서 유지 (안정 정렬)
+    const asc = filtered.map((t, i) => ({ t, i }))
+      .sort((a, b) => {
+        const dateCmp = a.t.date.localeCompare(b.t.date);
+        if (dateCmp !== 0) return dateCmp;
+        // 같은 날: 입금(amount>0)이 출금(amount<0)보다 먼저
+        const aIsInflow = a.t.amount > 0;
+        const bIsInflow = b.t.amount > 0;
+        if (aIsInflow && !bIsInflow) return -1;
+        if (!aIsInflow && bIsInflow) return 1;
+        // 같은 방향: 원본 순서 유지 (안정성)
+        return a.i - b.i;
+      })
+      .map(x => x.t);
     let openingSum = 0;
     if (accountFilter !== 'all') {
       const acc = metrics.filteredAccounts.find(a => a.number === accountFilter);
