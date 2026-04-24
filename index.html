@@ -536,6 +536,8 @@ function parseAccountsFile(headers, rows) {
       accountType,
       fundType: r['자금구분'] || '',
       number,
+      // 계좌용도 (운영비, R&D, 급여 등) — 시트의 선택 필드
+      usage: String(r['계좌용도'] || '').trim(),
       openingBalance: parseNumber(r['기초금액']),
       // 런웨이 플래그: CSV 원본(Y/N 없이) 또는 (Y/N) 붙은 변형 둘 다 허용
       isPure: isYes(r['순수자금_런웨이(Y/N)'] ?? r['순수자금_런웨이'] ?? r['순수자금런웨이']),
@@ -1129,7 +1131,7 @@ function ResetFiltersButton({ onClick }) {
 // ============================================================================
 //  RAW TABLE — displays uploaded columns as-is + optional extra computed columns
 // ============================================================================
-function RawTable({ headers, rows, extraColumns = [], maxHeight = 560, colSpan }) {
+function RawTable({ headers, rows, extraColumns = [], maxHeight = 560, colSpan, rowStyle }) {
   const totalCols = headers.length + extraColumns.length;
   const [sortKey, setSortKey] = useState(null);
   const [sortDir, setSortDir] = useState('asc'); // 'asc' | 'desc'
@@ -1207,8 +1209,10 @@ function RawTable({ headers, rows, extraColumns = [], maxHeight = 560, colSpan }
           </tr>
         </thead>
         <tbody>
-          {sortedRows.map((row, i) => (
-            <tr key={row.id || i} style={{ borderTop: `1px solid ${COLOR.border}` }}>
+          {sortedRows.map((row, i) => {
+            const customStyle = rowStyle ? rowStyle(row) : null;
+            return (
+            <tr key={row.id || i} style={{ borderTop: `1px solid ${COLOR.border}`, ...(customStyle || {}) }}>
               {headers.map(h => {
                 const v = row._raw?.[h] ?? '';
                 const numeric = looksNumeric(v);
@@ -1228,7 +1232,8 @@ function RawTable({ headers, rows, extraColumns = [], maxHeight = 560, colSpan }
                 </td>
               ))}
             </tr>
-          ))}
+            );
+          })}
           {sortedRows.length === 0 && (
             <tr><td colSpan={colSpan || totalCols || 1} className="px-4 py-8 text-center" style={{ color: COLOR.textMute }}>데이터가 없습니다.</td></tr>
           )}
@@ -2195,7 +2200,18 @@ function AccountsView({ metrics }) {
             <DownloadButton onClick={handleExport} />
           </div>
         </div>
-        <RawTable headers={headers} rows={filtered} extraColumns={extraColumns} />
+        <RawTable headers={headers} rows={filtered} extraColumns={extraColumns}
+          rowStyle={(row) => {
+            const usage = String(row._raw?.['계좌용도'] || '').trim();
+            if (usage === '운영비_주거래') {
+              return {
+                background: `${COLOR.gold}0f`,
+                borderLeft: `3px solid ${COLOR.gold}`,
+              };
+            }
+            return null;
+          }}
+        />
       </Card>
     </div>
   );
@@ -2227,10 +2243,22 @@ function TransactionsView({ metrics }) {
     const cats = new Set(metrics.filteredTransactions.map(t => t.category).filter(Boolean));
     return [{ value: 'all', label: '전체 분류' }, ...Array.from(cats).sort().map(c => ({ value: c, label: c }))];
   }, [metrics.filteredTransactions]);
+  // 계좌번호 → 계좌용도 매핑 (라벨 표시용)
+  const accountUsageMap = useMemo(() => {
+    const m = {};
+    metrics.filteredAccounts.forEach(a => {
+      m[a.number] = a.usage || '';
+    });
+    return m;
+  }, [metrics.filteredAccounts]);
+
   const accountOptions = useMemo(() => {
     const accs = new Set(metrics.filteredTransactions.map(t => t.accountNumber).filter(Boolean));
-    return [{ value: 'all', label: '전체 계좌' }, ...Array.from(accs).sort().map(a => ({ value: a, label: a }))];
-  }, [metrics.filteredTransactions]);
+    return [{ value: 'all', label: '전체 계좌' }, ...Array.from(accs).sort().map(a => {
+      const usage = accountUsageMap[a];
+      return { value: a, label: usage ? `${a} · ${usage}` : a };
+    })];
+  }, [metrics.filteredTransactions, accountUsageMap]);
   const counterpartOptions = useMemo(() => {
     const ctrs = new Set(metrics.filteredTransactions.map(t => t.counterpart).filter(Boolean));
     return [{ value: 'all', label: '전체 거래처' }, ...Array.from(ctrs).sort().map(c => ({ value: c, label: c }))];
@@ -2413,7 +2441,7 @@ function TransactionsView({ metrics }) {
           <Select value={typeFilter} onChange={setTypeFilter} options={[{ value: 'all', label: '전체' }, { value: 'in', label: '입금만' }, { value: 'out', label: '출금만' }]} width={100} />
           <Select value={categoryFilter} onChange={setCategoryFilter} options={categoryOptions} width={140} />
           <Select value={counterpartFilter} onChange={setCounterpartFilter} options={counterpartOptions} width={150} />
-          <Select value={accountFilter} onChange={setAccountFilter} options={accountOptions} width={170} />
+          <Select value={accountFilter} onChange={setAccountFilter} options={accountOptions} width={220} />
           <DateInput value={startDate} onChange={setStartDate} />
           <span style={{ color: COLOR.textMute }}>~</span>
           <DateInput value={endDate} onChange={setEndDate} />
