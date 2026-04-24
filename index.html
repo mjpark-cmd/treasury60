@@ -1373,7 +1373,7 @@ function MonthlyBalanceChart({ series, negativeMonth, accentColor, titleLabel })
 // ============================================================================
 //  DASHBOARD
 // ============================================================================
-function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFilter, setPlanYearFilter, actualizedMonths, setActualizedMonths, teamSettings }) {
+function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFilter, setPlanYearFilter, actualizedMonths, setActualizedMonths, teamSettings, cutoffOverride, setCutoffOverride, historicalCutoffOptions }) {
   const { pureFunds, availableFunds, financialFunds, availableForRunway, fundTypeList,
           pureFundsOpening,
           rdFunds, creditBalanceSum,
@@ -1393,49 +1393,59 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
 
   return (
     <div className="space-y-6">
-      {/* 팀 마감월 배너 (시트 "설정" 탭에서 동기화됨) */}
-      {teamSettings && teamSettings.closingMonth && (() => {
-        const closing = teamSettings.closingMonth; // "2026-03" 형식
-        // 마감월을 "2026년 3월" 형식으로 표시
-        const prettyMonth = (() => {
-          const m = closing.match(/^(\d{4})-(\d{2})$/);
-          if (m) return `${m[1]}년 ${parseInt(m[2])}월`;
-          return closing;
-        })();
-        const statusColor = COLOR.success;
-        const statusBg = `${COLOR.success}12`;
-        const statusBorder = `${COLOR.success}50`;
-
-        return (
-          <div className="rounded-xl p-4 flex items-center gap-3 flex-wrap"
-               style={{ background: statusBg, border: `1px solid ${statusBorder}` }}>
-            <div className="rounded-lg p-2 flex items-center justify-center"
-                 style={{ background: `${statusColor}22`, color: statusColor }}>
-              <Lock size={16} />
-            </div>
-            <div>
-              <div className="text-sm font-semibold" style={{ color: COLOR.text }}>
-                실적 마감: {prettyMonth}까지 확정
-              </div>
-              <div className="text-[11px] mt-0.5" style={{ color: COLOR.textDim }}>
-                {teamSettings.closedBy && `담당: ${teamSettings.closedBy}`}
-                {teamSettings.closedAt && `${teamSettings.closedBy ? ' · ' : ''}확정일: ${teamSettings.closedAt}`}
-                {teamSettings.note && ` · ${teamSettings.note}`}
-              </div>
-            </div>
+      {/* 마감기준월 강조 배너 + 시점 여행 드롭다운 */}
+      <div className="rounded-xl p-4 flex items-center justify-between flex-wrap gap-3"
+           style={{
+             background: cutoffOverride
+               ? `linear-gradient(135deg, ${COLOR.purple}14 0%, ${COLOR.purple}08 100%)`
+               : `linear-gradient(135deg, ${COLOR.gold}14 0%, ${COLOR.gold}08 100%)`,
+             border: `1.5px solid ${cutoffOverride ? COLOR.purple + '55' : COLOR.gold + '55'}`
+           }}>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="rounded-lg p-2.5 flex items-center justify-center"
+               style={{ background: `${cutoffOverride ? COLOR.purple : COLOR.gold}22`,
+                        color: cutoffOverride ? COLOR.purple : COLOR.gold }}>
+            <CalendarIcon size={20} />
           </div>
-        );
-      })()}
-
-      {/* 자금 현황 컷오프 라벨 */}
-      <div className="flex items-center justify-between flex-wrap gap-2 px-1" style={{ color: COLOR.textMute }}>
-        <div className="text-xs flex items-center gap-2">
-          <CalendarIcon size={12} />
-          <span>자금 현황 기준:</span>
-          <b style={{ color: useMonthFilter ? COLOR.gold : COLOR.textDim, fontFamily: 'var(--mono)' }}>{cutoffLabel}</b>
-          {!useMonthFilter && <span className="text-[11px]" style={{ color: COLOR.textMute }}>(시트 "설정" 탭에 마감월 입력 시 자동 적용)</span>}
+          <div>
+            <div className="text-[11px] font-medium mb-0.5" style={{ color: COLOR.textMute, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              {cutoffOverride ? '⏮ 과거 시점 조회' : '실적 마감 기준'}
+            </div>
+            <div className="text-xl font-bold tabular-nums" style={{ color: COLOR.text, fontFamily: 'var(--mono)', letterSpacing: '-0.01em' }}>
+              마감기준월 : <span style={{ color: cutoffOverride ? COLOR.purple : COLOR.gold }}>{cutoffOverride || teamSettings?.closingMonth || '—'}</span>
+            </div>
+            {cutoffOverride && teamSettings?.closingMonth && (
+              <div className="text-[11px] mt-0.5" style={{ color: COLOR.textDim }}>
+                ⚠ 현재 팀 마감({teamSettings.closingMonth})이 아닌 <b>{cutoffOverride}</b> 시점 기준으로 조회 중
+              </div>
+            )}
+          </div>
         </div>
-        <div className="text-[11px]">기초금액 + 체크된 월 입출금 실적 합산</div>
+        {/* 시점 여행 드롭다운 */}
+        {historicalCutoffOptions && historicalCutoffOptions.length > 1 && (
+          <div className="flex items-center gap-2">
+            <div className="text-[11px]" style={{ color: COLOR.textMute }}>시점 이동:</div>
+            <Select
+              value={cutoffOverride || teamSettings?.closingMonth || ''}
+              onChange={(v) => {
+                if (v === (teamSettings?.closingMonth || '')) setCutoffOverride(null);
+                else setCutoffOverride(v);
+              }}
+              options={historicalCutoffOptions.map(m => ({
+                value: m,
+                label: m === teamSettings?.closingMonth ? `${m} (팀 마감)` : m
+              }))}
+              width={180}
+            />
+            {cutoffOverride && (
+              <button onClick={() => setCutoffOverride(null)}
+                      className="text-[11px] px-3 py-1.5 rounded-md font-medium"
+                      style={{ background: COLOR.gold, color: '#fff', border: 'none', cursor: 'pointer' }}>
+                현재로 돌아가기
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ==================== 💎 자금 현황 + 실적 런웨이 (통합 프리미엄 카드) ==================== */}
@@ -2094,7 +2104,7 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
 // ============================================================================
 //  ACCOUNTS VIEW
 // ============================================================================
-function AccountsView({ metrics }) {
+function AccountsView({ metrics, teamSettings, cutoffOverride, setCutoffOverride, historicalCutoffOptions }) {
   const [search, setSearch] = useState('');
   const [accountTypeFilter, setAccountTypeFilter] = useState('all');
   const [fundTypeFilter, setFundTypeFilter] = useState('all');
@@ -2160,20 +2170,64 @@ function AccountsView({ metrics }) {
 
   return (
     <div className="space-y-4">
-      {/* 컷오프 라벨 */}
-      <div className="flex items-center justify-between flex-wrap gap-2 px-1" style={{ color: COLOR.textMute }}>
-        <div className="text-xs flex items-center gap-2 flex-wrap">
-          <CalendarIcon size={12} />
-          <span>실적 반영 기준:</span>
-          <b style={{ color: metrics.useMonthFilter ? COLOR.gold : COLOR.textDim, fontFamily: 'var(--mono)' }}>{metrics.cutoffLabel}</b>
-          {!metrics.useMonthFilter && <span className="text-[11px]" style={{ color: COLOR.textMute }}>(시트 "설정" 탭에 마감월 입력 시 자동 적용)</span>}
-          {excludedCreditCount > 0 && (
-            <span className="text-[11px] px-2 py-0.5 rounded" style={{ color: COLOR.purple, background: `${COLOR.purple}14`, border: `1px solid ${COLOR.purple}40` }}>
-              한도 사용중 계좌 {excludedCreditCount}개는 한도현황에서 별도 확인
-            </span>
-          )}
+      {/* 마감기준월 강조 배너 + 시점 여행 드롭다운 */}
+      <div className="rounded-xl p-4 flex items-center justify-between flex-wrap gap-3"
+           style={{
+             background: cutoffOverride
+               ? `linear-gradient(135deg, ${COLOR.purple}14 0%, ${COLOR.purple}08 100%)`
+               : `linear-gradient(135deg, ${COLOR.gold}14 0%, ${COLOR.gold}08 100%)`,
+             border: `1.5px solid ${cutoffOverride ? COLOR.purple + '55' : COLOR.gold + '55'}`
+           }}>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="rounded-lg p-2.5 flex items-center justify-center"
+               style={{ background: `${cutoffOverride ? COLOR.purple : COLOR.gold}22`,
+                        color: cutoffOverride ? COLOR.purple : COLOR.gold }}>
+            <CalendarIcon size={20} />
+          </div>
+          <div>
+            <div className="text-[11px] font-medium mb-0.5" style={{ color: COLOR.textMute, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              {cutoffOverride ? '⏮ 과거 시점 잔액 조회' : '계좌 잔액 기준'}
+            </div>
+            <div className="text-xl font-bold tabular-nums" style={{ color: COLOR.text, fontFamily: 'var(--mono)', letterSpacing: '-0.01em' }}>
+              마감기준월 : <span style={{ color: cutoffOverride ? COLOR.purple : COLOR.gold }}>{cutoffOverride || teamSettings?.closingMonth || '—'}</span>
+            </div>
+            {cutoffOverride && teamSettings?.closingMonth && (
+              <div className="text-[11px] mt-0.5" style={{ color: COLOR.textDim }}>
+                ⚠ 현재 팀 마감({teamSettings.closingMonth})이 아닌 <b>{cutoffOverride}</b> 시점의 계좌 잔액
+              </div>
+            )}
+            {excludedCreditCount > 0 && (
+              <div className="text-[11px] mt-1" style={{ color: COLOR.textDim }}>
+                한도 사용중 계좌 {excludedCreditCount}개는 한도현황에서 별도 확인
+              </div>
+            )}
+          </div>
         </div>
-        <div className="text-[11px]">입금계/출금계/현재잔액은 실적 마감된 월만 합산</div>
+        {/* 시점 여행 드롭다운 */}
+        {historicalCutoffOptions && historicalCutoffOptions.length > 1 && (
+          <div className="flex items-center gap-2">
+            <div className="text-[11px]" style={{ color: COLOR.textMute }}>시점 이동:</div>
+            <Select
+              value={cutoffOverride || teamSettings?.closingMonth || ''}
+              onChange={(v) => {
+                if (v === (teamSettings?.closingMonth || '')) setCutoffOverride(null);
+                else setCutoffOverride(v);
+              }}
+              options={historicalCutoffOptions.map(m => ({
+                value: m,
+                label: m === teamSettings?.closingMonth ? `${m} (팀 마감)` : m
+              }))}
+              width={180}
+            />
+            {cutoffOverride && (
+              <button onClick={() => setCutoffOverride(null)}
+                      className="text-[11px] px-3 py-1.5 rounded-md font-medium"
+                      style={{ background: COLOR.gold, color: '#fff', border: 'none', cursor: 'pointer' }}>
+                현재로 돌아가기
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -4049,26 +4103,55 @@ function FinanceDashboard() {
     trySilentLogin();
   }, [loaded, driveSettings.clientId, driveSettings.spreadsheetUrl]);
 
+  // ⭐ 과거 시점 조회 (시점 여행)
+  // null이면 기본 마감월, 특정 월 선택 시 해당 월까지만 실적 반영
+  const [cutoffOverride, setCutoffOverride] = useState(null);
+
   // ⭐ 마감월 기준 실적 반영 월 자동 계산
   // 시트 "설정" 탭의 marginMonth="2026-03" → {2026-01, 2026-02, 2026-03}
-  // 이렇게 하면 전 사용자가 동일한 기준으로 대시보드를 봄
+  // cutoffOverride가 있으면 그 시점까지만 사용 (과거 시점 조회)
   const effectiveActualizedMonths = useMemo(() => {
-    if (!teamSettings.closingMonth) return new Set();
-    const m = teamSettings.closingMonth.match(/^(\d{4})-(\d{2})$/);
+    const activeCutoff = cutoffOverride || teamSettings.closingMonth;
+    if (!activeCutoff) return new Set();
+    const m = activeCutoff.match(/^(\d{4})-(\d{2})$/);
     if (!m) return new Set();
     const year = parseInt(m[1]);
     const month = parseInt(m[2]);
-    // 데이터 내 가장 이른 거래월 ~ 마감월까지 전부 포함
+    // 데이터 내 가장 이른 거래월 ~ 활성 마감월까지 전부 포함
     const allTxMonths = [...new Set((data.transactions || [])
       .map(t => t.date?.slice(0, 7))
       .filter(s => /^\d{4}-\d{2}$/.test(s || '')))].sort();
     const earliest = allTxMonths[0] || `${year}-01`;
-    // earliest부터 closingMonth까지 월 시퀀스 생성
+    // earliest부터 activeCutoff까지 월 시퀀스 생성
     const result = new Set();
     const [ey, em] = earliest.split('-').map(Number);
     let curY = ey, curM = em;
     while (curY < year || (curY === year && curM <= month)) {
       result.add(`${curY}-${String(curM).padStart(2, '0')}`);
+      curM++;
+      if (curM > 12) { curM = 1; curY++; }
+    }
+    return result;
+  }, [teamSettings.closingMonth, cutoffOverride, data.transactions]);
+
+  // 선택 가능한 과거 시점 목록 (시트 마감월 이전의 모든 월)
+  const historicalCutoffOptions = useMemo(() => {
+    if (!teamSettings.closingMonth) return [];
+    const m = teamSettings.closingMonth.match(/^(\d{4})-(\d{2})$/);
+    if (!m) return [];
+    const maxYear = parseInt(m[1]);
+    const maxMonth = parseInt(m[2]);
+    // 거래 데이터가 있는 월들 중에서
+    const allTxMonths = [...new Set((data.transactions || [])
+      .map(t => t.date?.slice(0, 7))
+      .filter(s => /^\d{4}-\d{2}$/.test(s || '')))].sort();
+    if (allTxMonths.length === 0) return [];
+    // earliest부터 closingMonth까지
+    const result = [];
+    const [ey, em] = allTxMonths[0].split('-').map(Number);
+    let curY = ey, curM = em;
+    while (curY < maxYear || (curY === maxYear && curM <= maxMonth)) {
+      result.push(`${curY}-${String(curM).padStart(2, '0')}`);
       curM++;
       if (curM > 12) { curM = 1; curY++; }
     }
@@ -4161,8 +4244,8 @@ function FinanceDashboard() {
             </Card>
           )}
 
-          {hasData && tab === 'dashboard'    && <DashboardView    metrics={metrics} planTypeChoice={planTypeChoice} setPlanTypeChoice={setPlanTypeChoice} planYearFilter={planYearFilter} setPlanYearFilter={setPlanYearFilter} actualizedMonths={effectiveActualizedMonths} setActualizedMonths={setActualizedMonths} teamSettings={teamSettings} />}
-          {hasData && tab === 'accounts'     && <AccountsView     metrics={metrics} />}
+          {hasData && tab === 'dashboard'    && <DashboardView    metrics={metrics} planTypeChoice={planTypeChoice} setPlanTypeChoice={setPlanTypeChoice} planYearFilter={planYearFilter} setPlanYearFilter={setPlanYearFilter} actualizedMonths={effectiveActualizedMonths} setActualizedMonths={setActualizedMonths} teamSettings={teamSettings} cutoffOverride={cutoffOverride} setCutoffOverride={setCutoffOverride} historicalCutoffOptions={historicalCutoffOptions} />}
+          {hasData && tab === 'accounts'     && <AccountsView     metrics={metrics} teamSettings={teamSettings} cutoffOverride={cutoffOverride} setCutoffOverride={setCutoffOverride} historicalCutoffOptions={historicalCutoffOptions} />}
           {hasData && tab === 'transactions' && <TransactionsView metrics={metrics} />}
           {hasData && tab === 'plans'        && <PlansView        metrics={metrics} />}
           {hasData && tab === 'loans'        && <LoansView        loans={loans} entityFilter={entityFilter} />}
