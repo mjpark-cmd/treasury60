@@ -2109,6 +2109,18 @@ function AccountsView({ metrics, teamSettings, cutoffOverride, setCutoffOverride
   const [accountTypeFilter, setAccountTypeFilter] = useState('all');
   const [fundTypeFilter, setFundTypeFilter] = useState('all');
 
+  // ⭐ 법인 변경 시 유효하지 않은 필터 값 자동 초기화
+  useEffect(() => {
+    if (accountTypeFilter !== 'all') {
+      const exists = metrics.filteredAccounts.some(a => a.accountType === accountTypeFilter);
+      if (!exists) setAccountTypeFilter('all');
+    }
+    if (fundTypeFilter !== 'all') {
+      const exists = metrics.filteredAccounts.some(a => a.fundType === fundTypeFilter);
+      if (!exists) setFundTypeFilter('all');
+    }
+  }, [metrics.filteredAccounts, accountTypeFilter, fundTypeFilter]);
+
   const accountTypeOptions = useMemo(() => {
     const types = new Set(metrics.filteredAccounts.map(a => a.accountType).filter(Boolean));
     return [{ value: 'all', label: '전체 계좌구분' }, ...Array.from(types).sort().map(t => ({ value: t, label: t }))];
@@ -2286,6 +2298,23 @@ function TransactionsView({ metrics }) {
   const [sortOrder, setSortOrder] = useState('desc'); // 'desc' = 최근순, 'asc' = 과거순
   // 한도약정계좌 포함 여부: 'all' (모두) | 'exclude' (제외) | 'only' (한도약정만)
   const [creditMode, setCreditMode] = useState('all');
+
+  // ⭐ 법인 변경 시 유효하지 않은 필터 값 자동 초기화
+  // 예: 식스티에서 특정 계좌 선택 후 패리티로 바꾸면 그 계좌가 없으므로 "전체 계좌"로 리셋
+  useEffect(() => {
+    if (accountFilter !== 'all') {
+      const exists = metrics.filteredTransactions.some(t => t.accountNumber === accountFilter);
+      if (!exists) setAccountFilter('all');
+    }
+    if (counterpartFilter !== 'all') {
+      const exists = metrics.filteredTransactions.some(t => t.counterpart === counterpartFilter);
+      if (!exists) setCounterpartFilter('all');
+    }
+    if (categoryFilter !== 'all') {
+      const exists = metrics.filteredTransactions.some(t => t.category === categoryFilter);
+      if (!exists) setCategoryFilter('all');
+    }
+  }, [metrics.filteredTransactions, accountFilter, counterpartFilter, categoryFilter]);
 
   // 한도약정 계좌 번호 집합
   const creditAccountNumbers = useMemo(() => new Set(
@@ -2632,6 +2661,30 @@ function PlansView({ metrics }) {
   const [monthTo, setMonthTo] = useState('all');
   const [directionFilter, setDirectionFilter] = useState('all'); // all | inflow | outflow
   const [minAmount, setMinAmount] = useState('');
+
+  // ⭐ 법인 변경 시 유효하지 않은 필터 값 자동 초기화
+  useEffect(() => {
+    if (planTypeFilter !== 'all') {
+      const exists = metrics.filteredPlans.some(p => p.planType === planTypeFilter);
+      if (!exists) setPlanTypeFilter('all');
+    }
+    if (subjectTypeFilter !== 'all') {
+      const exists = metrics.filteredPlans.some(p => p.subjectType === subjectTypeFilter);
+      if (!exists) setSubjectTypeFilter('all');
+    }
+    if (accountFilter !== 'all') {
+      const exists = metrics.filteredPlans.some(p => p.account === accountFilter);
+      if (!exists) setAccountFilter('all');
+    }
+    if (monthFrom !== 'all') {
+      const exists = metrics.filteredPlans.some(p => p.month === monthFrom);
+      if (!exists) setMonthFrom('all');
+    }
+    if (monthTo !== 'all') {
+      const exists = metrics.filteredPlans.some(p => p.month === monthTo);
+      if (!exists) setMonthTo('all');
+    }
+  }, [metrics.filteredPlans, planTypeFilter, subjectTypeFilter, accountFilter, monthFrom, monthTo]);
 
   const planTypeOptions = useMemo(() => {
     const types = new Set(metrics.filteredPlans.map(p => p.planType).filter(Boolean));
