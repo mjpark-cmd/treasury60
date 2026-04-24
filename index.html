@@ -536,8 +536,8 @@ function parseAccountsFile(headers, rows) {
       accountType,
       fundType: r['자금구분'] || '',
       number,
-      // 계좌용도 (운영비, R&D, 급여 등) — 시트의 선택 필드
-      usage: String(r['계좌용도'] || '').trim(),
+      // 계좌성격/계좌용도 (운영비_주거래, R&D, 급여 등) — 시트의 선택 필드
+      usage: String(r['계좌성격'] || r['계좌용도'] || '').trim(),
       openingBalance: parseNumber(r['기초금액']),
       // 런웨이 플래그: CSV 원본(Y/N 없이) 또는 (Y/N) 붙은 변형 둘 다 허용
       isPure: isYes(r['순수자금_런웨이(Y/N)'] ?? r['순수자금_런웨이'] ?? r['순수자금런웨이']),
@@ -2202,7 +2202,7 @@ function AccountsView({ metrics }) {
         </div>
         <RawTable headers={headers} rows={filtered} extraColumns={extraColumns}
           rowStyle={(row) => {
-            const usage = String(row._raw?.['계좌용도'] || '').trim();
+            const usage = String(row._raw?.['계좌성격'] || row._raw?.['계좌용도'] || '').trim();
             if (usage === '운영비_주거래') {
               return {
                 background: `${COLOR.gold}0f`,
