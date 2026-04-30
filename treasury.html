@@ -126,7 +126,7 @@ const OAUTH_SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly';
 const DEFAULT_DRIVE = {
   clientId: '',
   spreadsheetUrl: '',
-  tabs: { accounts: 'Master_Accounts', transactions: 'Master_Actuals', plans: 'Master_Plans', settings: 'Master_Settings', loans: 'Master_Loans' },
+  tabs: { accounts: '마스터_계좌', transactions: '마스터_계좌입출금실적', plans: '마스터_자금계획', settings: '설정', loans: '차입금현황' },
 };
 const MONTH_ABBR_TO_NUM = {
   Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06',
@@ -3284,7 +3284,7 @@ function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, a
     const next = {
       clientId: formClientId.trim(),
       spreadsheetUrl: formUrl.trim(),
-      tabs: DEFAULT_DRIVE.tabs,  // 표준 시트명 강제 (사용자 커스텀 차단)
+      tabs: formTabs,
     };
     setDriveSettings(next);
     setAccessToken(null); // Client ID 변경 시 토큰 재요청 필요
@@ -3632,21 +3632,16 @@ function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, a
                        style={{ background: COLOR.bg, border: `1px solid ${COLOR.border}`, color: COLOR.text, fontFamily: 'var(--mono)', fontSize: '12px' }} />
               </div>
               <div>
-                <label className="text-xs font-medium mb-2 block" style={{ color: COLOR.textDim }}>시트 탭 이름 <span style={{ fontSize: '10px', color: COLOR.textMute, marginLeft: '6px', fontWeight: 400 }}>(고정 — 표준 명명 규칙)</span></label>
+                <label className="text-xs font-medium mb-2 block" style={{ color: COLOR.textDim }}>시트 탭 이름</label>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   {[['accounts', '계좌 마스터'], ['transactions', '입출금 실적'], ['plans', '자금 계획']].map(([key, label]) => (
                     <div key={key}>
                       <div className="text-[10px] mb-1" style={{ color: COLOR.textMute }}>{label}</div>
-                      <div className="w-full px-3 py-2 rounded-lg text-sm"
-                           style={{ background: COLOR.surfaceEl || COLOR.bg, border: `1px solid ${COLOR.border}`, color: COLOR.text, fontFamily: 'var(--mono)', fontSize: '12px', opacity: 0.85 }}>
-                        {DEFAULT_DRIVE.tabs[key]}
-                      </div>
+                      <input type="text" value={formTabs[key]} onChange={e => setFormTabs({ ...formTabs, [key]: e.target.value })}
+                             className="w-full px-3 py-2 rounded-lg text-sm"
+                             style={{ background: COLOR.bg, border: `1px solid ${COLOR.border}`, color: COLOR.text, fontFamily: 'var(--mono)', fontSize: '12px' }} />
                     </div>
                   ))}
-                </div>
-                <div className="text-[10px] mt-2" style={{ color: COLOR.textMute, lineHeight: 1.5 }}>
-                  ▸ Google Sheets의 탭 이름을 위 표준명과 정확히 일치시켜야 합니다<br/>
-                  ▸ 시트 탭에서 이름 변경은 <code style={{ background: COLOR.surfaceEl || COLOR.bg, padding: '1px 4px', borderRadius: 3 }}>마스터_계좌</code> 같은 경우 → <code style={{ background: COLOR.surfaceEl || COLOR.bg, padding: '1px 4px', borderRadius: 3 }}>{DEFAULT_DRIVE.tabs.accounts}</code>로 수정
                 </div>
               </div>
               <div className="flex justify-end">
@@ -3941,7 +3936,7 @@ function FinanceDashboard() {
         setDriveSettings({
           ...DEFAULT_DRIVE,
           ...parsed,
-          tabs: DEFAULT_DRIVE.tabs,  // 시트 탭 이름은 항상 표준값 강제 (사용자별 커스텀 차단)
+          tabs: { ...DEFAULT_DRIVE.tabs, ...(parsed.tabs || {}) },
         });
       }
     } catch { setData({ accounts: [], transactions: [], plans: [] }); }
