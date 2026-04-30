@@ -3335,8 +3335,8 @@ function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, a
         fetchSheetArray(ssid, driveSettings.tabs.accounts, token),
         fetchSheetArray(ssid, driveSettings.tabs.transactions, token),
         fetchSheetArray(ssid, driveSettings.tabs.plans, token),
-        fetchSheetArray(ssid, driveSettings.tabs.settings || '설정', token).catch(() => []),
-        fetchSheetRange(ssid, driveSettings.tabs.loans || '차입금현황', 'B8:R10000', token).catch(() => []),
+        fetchSheetArray(ssid, '설정', token).catch(() => []),
+        fetchSheetRange(ssid, '차입금현황', 'B8:R10000', token).catch(() => []),
       ]);
       const accHR = sheetArrayToRowsWithHeaders(accArr);
       const txHR = sheetArrayToRowsWithHeaders(txArr);
@@ -3383,9 +3383,9 @@ function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, a
         fetchSheetArray(ssid, driveSettings.tabs.transactions, accessToken),
         fetchSheetArray(ssid, driveSettings.tabs.plans, accessToken),
         // 설정 탭은 선택사항 - 없어도 에러 안 남
-        fetchSheetArray(ssid, driveSettings.tabs.settings || '설정', accessToken).catch(() => []),
+        fetchSheetArray(ssid, '설정', accessToken).catch(() => []),
         // 차입금 시트도 선택사항 - B8:R부터만 가져옴
-        fetchSheetRange(ssid, driveSettings.tabs.loans || '차입금현황', 'B8:R10000', accessToken).catch(() => []),
+        fetchSheetRange(ssid, '차입금현황', 'B8:R10000', accessToken).catch(() => []),
       ]);
       // ⭐ CSV 텍스트로 변환 후 파일 업로드와 완전히 동일한 파서 사용
       // 이렇게 하면 Sheets 동기화 = CSV 업로드 결과가 100% 일치
@@ -4013,8 +4013,8 @@ function FinanceDashboard() {
                 fetchSheetArray(ssid, driveSettings.tabs.accounts, response.access_token),
                 fetchSheetArray(ssid, driveSettings.tabs.transactions, response.access_token),
                 fetchSheetArray(ssid, driveSettings.tabs.plans, response.access_token),
-                fetchSheetArray(ssid, driveSettings.tabs.settings || '설정', response.access_token).catch(() => []),
-                fetchSheetRange(ssid, driveSettings.tabs.loans || '차입금현황', 'B8:R10000', response.access_token).catch(() => []),
+                fetchSheetArray(ssid, '설정', response.access_token).catch(() => []),
+                fetchSheetRange(ssid, '차입금현황', 'B8:R10000', response.access_token).catch(() => []),
               ]);
               const accHR = sheetArrayToRowsWithHeaders(accArr);
               const txHR = sheetArrayToRowsWithHeaders(txArr);
