@@ -1373,7 +1373,7 @@ function MonthlyBalanceChart({ series, negativeMonth, accentColor, titleLabel })
 // ============================================================================
 //  DASHBOARD
 // ============================================================================
-function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFilter, setPlanYearFilter, actualizedMonths, setActualizedMonths, teamSettings }) {
+function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFilter, setPlanYearFilter, actualizedMonths, setActualizedMonths, teamSettings, userClosingMonthOverride, setUserClosingMonthOverride, effectiveClosingMonth, data }) {
   const { pureFunds, availableFunds, financialFunds, availableForRunway, fundTypeList,
           pureFundsOpening,
           rdFunds, creditBalanceSum,
@@ -1393,18 +1393,34 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
 
   return (
     <div className="space-y-6">
-      {/* 팀 마감월 배너 (시트 "설정" 탭에서 동기화됨) */}
-      {teamSettings && teamSettings.closingMonth && (() => {
-        const closing = teamSettings.closingMonth; // "2026-03" 형식
-        // 마감월을 "2026년 3월" 형식으로 표시
-        const prettyMonth = (() => {
-          const m = closing.match(/^(\d{4})-(\d{2})$/);
+      {/* 팀 마감월 배너 + 임시 기준월 셀렉터 */}
+      {(() => {
+        const teamClosing = teamSettings?.closingMonth || '';  // 시트 마감월
+        const isOverride = !!userClosingMonthOverride && userClosingMonthOverride !== teamClosing;
+        const currentClosing = effectiveClosingMonth;  // 실제 적용중인 월
+
+        // 사용 가능한 월 옵션 — 거래 데이터에서 추출
+        const allTxMonths = [...new Set((data?.transactions || [])
+          .map(t => t.date?.slice(0, 7))
+          .filter(s => /^\d{4}-\d{2}$/.test(s || '')))].sort();
+        const allPlanMonths = [...new Set((data?.plans || [])
+          .map(p => p.month)
+          .filter(s => /^\d{4}-\d{2}$/.test(s || '')))].sort();
+        const allMonthsAvailable = [...new Set([...allTxMonths, ...allPlanMonths])].sort();
+
+        const prettyMonth = (s) => {
+          if (!s) return '없음';
+          const m = s.match(/^(\d{4})-(\d{2})$/);
           if (m) return `${m[1]}년 ${parseInt(m[2])}월`;
-          return closing;
-        })();
-        const statusColor = COLOR.success;
-        const statusBg = `${COLOR.success}12`;
-        const statusBorder = `${COLOR.success}50`;
+          return s;
+        };
+
+        // 마감월 자체가 없으면 안내 표시 안 함 (기존 알림 카드가 따로 있음)
+        if (!teamClosing && allMonthsAvailable.length === 0) return null;
+
+        const statusColor = isOverride ? COLOR.gold : COLOR.success;
+        const statusBg = `${statusColor}12`;
+        const statusBorder = `${statusColor}50`;
 
         return (
           <div className="rounded-xl p-4 flex items-center gap-3 flex-wrap"
@@ -1413,15 +1429,49 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
                  style={{ background: `${statusColor}22`, color: statusColor }}>
               <Lock size={16} />
             </div>
-            <div>
-              <div className="text-sm font-semibold" style={{ color: COLOR.text }}>
-                실적 마감: {prettyMonth}까지 확정
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold flex items-center gap-2 flex-wrap" style={{ color: COLOR.text }}>
+                <span>실적 마감: {prettyMonth(currentClosing)}까지</span>
+                {isOverride && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+                        style={{ color: COLOR.gold, background: `${COLOR.gold}20`, border: `1px solid ${COLOR.gold}50` }}>
+                    임시 변경됨 (시트 마감: {prettyMonth(teamClosing)})
+                  </span>
+                )}
               </div>
               <div className="text-[11px] mt-0.5" style={{ color: COLOR.textDim }}>
-                {teamSettings.closedBy && `담당: ${teamSettings.closedBy}`}
-                {teamSettings.closedAt && `${teamSettings.closedBy ? ' · ' : ''}확정일: ${teamSettings.closedAt}`}
-                {teamSettings.note && ` · ${teamSettings.note}`}
+                {teamSettings?.closedBy && `담당: ${teamSettings.closedBy}`}
+                {teamSettings?.closedAt && `${teamSettings?.closedBy ? ' · ' : ''}확정일: ${teamSettings.closedAt}`}
+                {teamSettings?.note && ` · ${teamSettings.note}`}
+                {!teamSettings?.closedBy && !teamSettings?.closedAt && (
+                  <span>이 기준 시점으로 자금현황 · 실적/계획 구분 · 누적잔액 모두 계산됩니다</span>
+                )}
               </div>
+            </div>
+            {/* 임시 기준월 셀렉터 */}
+            <div className="flex items-center gap-2">
+              <span className="text-[11px]" style={{ color: COLOR.textMute }}>기준월 임시 변경:</span>
+              <select
+                value={userClosingMonthOverride || ''}
+                onChange={(e) => setUserClosingMonthOverride(e.target.value || null)}
+                style={{
+                  padding: '5px 10px', fontSize: 12, border: `1px solid ${COLOR.border}`,
+                  borderRadius: 6, background: COLOR.surface, color: COLOR.text,
+                  fontFamily: 'var(--mono)', outline: 'none', cursor: 'pointer',
+                }}>
+                <option value="">시트 마감월 사용{teamClosing ? ` (${prettyMonth(teamClosing)})` : ''}</option>
+                {allMonthsAvailable.map(m => (
+                  <option key={m} value={m}>{prettyMonth(m)}까지 실적</option>
+                ))}
+              </select>
+              {isOverride && (
+                <button
+                  onClick={() => setUserClosingMonthOverride(null)}
+                  className="text-[11px] px-2 py-1 rounded"
+                  style={{ background: COLOR.surface, border: `1px solid ${COLOR.border}`, color: COLOR.gold, cursor: 'pointer' }}>
+                  원복
+                </button>
+              )}
             </div>
           </div>
         );
@@ -2290,7 +2340,15 @@ function TransactionsView({ metrics }) {
 
   // 거래일 기준 오름차순 정렬 후 누적 잔액 계산 (항상 과거부터 누적)
   const withBalance = useMemo(() => {
-    const asc = [...filtered].sort((a, b) => a.date.localeCompare(b.date));
+    // 같은 날짜에서는 입금 먼저, 출금 나중 (누적잔액이 일시적으로 음수가 되는 것 방지)
+    const asc = [...filtered].sort((a, b) => {
+      const d = a.date.localeCompare(b.date);
+      if (d !== 0) return d;
+      // 입금(amount > 0)이 출금(amount < 0)보다 먼저
+      const aIn = a.inflow > 0 ? 0 : 1;
+      const bIn = b.inflow > 0 ? 0 : 1;
+      return aIn - bIn;
+    });
     let openingSum = 0;
     if (accountFilter !== 'all') {
       const acc = metrics.filteredAccounts.find(a => a.number === accountFilter);
@@ -3894,6 +3952,8 @@ function FinanceDashboard() {
   const [planTypeChoice, setPlanTypeChoice] = useState('전체계획');
   const [planYearFilter, setPlanYearFilter] = useState('2026');
   const [actualizedMonths, setActualizedMonths] = useState(new Set());
+  // 사용자가 대시보드에서 임시로 다른 기준월을 선택한 경우 (시트 마감월보다 우선)
+  const [userClosingMonthOverride, setUserClosingMonthOverride] = useState(null);
   const [data, setData] = useState({ accounts: [], transactions: [], plans: [] });
   const [loaded, setLoaded] = useState(false);
   const [entityMenuOpen, setEntityMenuOpen] = useState(false);
@@ -4050,11 +4110,13 @@ function FinanceDashboard() {
   }, [loaded, driveSettings.clientId, driveSettings.spreadsheetUrl]);
 
   // ⭐ 마감월 기준 실적 반영 월 자동 계산
+  // 우선순위: userClosingMonthOverride (사용자가 대시보드에서 임시로 변경) > teamSettings.closingMonth (시트 마감월)
   // 시트 "설정" 탭의 marginMonth="2026-03" → {2026-01, 2026-02, 2026-03}
   // 이렇게 하면 전 사용자가 동일한 기준으로 대시보드를 봄
+  const effectiveClosingMonth = userClosingMonthOverride || teamSettings.closingMonth || '';
   const effectiveActualizedMonths = useMemo(() => {
-    if (!teamSettings.closingMonth) return new Set();
-    const m = teamSettings.closingMonth.match(/^(\d{4})-(\d{2})$/);
+    if (!effectiveClosingMonth) return new Set();
+    const m = effectiveClosingMonth.match(/^(\d{4})-(\d{2})$/);
     if (!m) return new Set();
     const year = parseInt(m[1]);
     const month = parseInt(m[2]);
@@ -4073,7 +4135,7 @@ function FinanceDashboard() {
       if (curM > 12) { curM = 1; curY++; }
     }
     return result;
-  }, [teamSettings.closingMonth, data.transactions]);
+  }, [effectiveClosingMonth, data.transactions]);
 
   const metrics = useMemo(() => calcMetrics(data, entityFilter, planTypeChoice, effectiveActualizedMonths, planYearFilter), [data, entityFilter, planTypeChoice, effectiveActualizedMonths, planYearFilter]);
   const allEntities = metrics.allEntities || [];
@@ -4161,7 +4223,7 @@ function FinanceDashboard() {
             </Card>
           )}
 
-          {hasData && tab === 'dashboard'    && <DashboardView    metrics={metrics} planTypeChoice={planTypeChoice} setPlanTypeChoice={setPlanTypeChoice} planYearFilter={planYearFilter} setPlanYearFilter={setPlanYearFilter} actualizedMonths={effectiveActualizedMonths} setActualizedMonths={setActualizedMonths} teamSettings={teamSettings} />}
+          {hasData && tab === 'dashboard'    && <DashboardView    metrics={metrics} planTypeChoice={planTypeChoice} setPlanTypeChoice={setPlanTypeChoice} planYearFilter={planYearFilter} setPlanYearFilter={setPlanYearFilter} actualizedMonths={effectiveActualizedMonths} setActualizedMonths={setActualizedMonths} teamSettings={teamSettings} userClosingMonthOverride={userClosingMonthOverride} setUserClosingMonthOverride={setUserClosingMonthOverride} effectiveClosingMonth={effectiveClosingMonth} data={data} />}
           {hasData && tab === 'accounts'     && <AccountsView     metrics={metrics} />}
           {hasData && tab === 'transactions' && <TransactionsView metrics={metrics} />}
           {hasData && tab === 'plans'        && <PlansView        metrics={metrics} />}
