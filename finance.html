@@ -2027,6 +2027,7 @@ function App() {
   }), hasData && tab === "statements" && /*#__PURE__*/React.createElement(StatementsView, {
     financialAnnual: financialAnnual,
     financialMonthly: financialMonthly,
+    sales: sales,
     year: year,
     entity: entity
   }), tab === "sales" && /*#__PURE__*/React.createElement(SalesView, {
@@ -4100,6 +4101,7 @@ function PieBlock({
 function StatementsView({
   financialAnnual,
   financialMonthly,
+  sales,
   year,
   entity
 }) {
@@ -4425,11 +4427,16 @@ function StatementsView({
       borderRadius: 3,
       fontFamily: MONO
     }
-  }, "\uD574\uB2F9\uB144\uB3C4"), " \uC140\uC774 \uBE48 \uAC12\uC774\uAC70\uB098 \uC798\uBABB\uB41C \uD615\uC2DD\uC778\uC9C0 \uD655\uC778.")), period === "annual" && annualCalcs && /*#__PURE__*/React.createElement(FinancialStatementBlock, {
+  }, "\uD574\uB2F9\uB144\uB3C4"), " \uC140\uC774 \uBE48 \uAC12\uC774\uAC70\uB098 \uC798\uBABB\uB41C \uD615\uC2DD\uC778\uC9C0 \uD655\uC778.")), period === "annual" && annualCalcs && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(FinancialStatementBlock, {
     calcs: annualCalcs,
     periodLabel: `${year}년 결산`,
     entity: entity
-  }), period === "annual" && !annualCalcs && /*#__PURE__*/React.createElement(Card, {
+  }), entity === CONSOLIDATED && /*#__PURE__*/React.createElement(IntercoAnalysisPeriod, {
+    financialFiltered: financialAnnual,
+    salesFiltered: sales.filter(r => r.year === year),
+    periodLabel: `${year}년 결산`,
+    periodMatch: r => r.year === year
+  })), period === "annual" && !annualCalcs && /*#__PURE__*/React.createElement(Card, {
     className: "p-8 text-center text-sm",
     style: {
       color: COLOR.textDim
@@ -4453,6 +4460,11 @@ function StatementsView({
     financialMonthly: financialMonthly,
     entity: entity,
     bsAt: bsAt
+  }), entity === CONSOLIDATED && /*#__PURE__*/React.createElement(IntercoAnalysisPeriod, {
+    financialFiltered: financialMonthly,
+    salesFiltered: sales.filter(r => r.monthKey && r.monthKey >= isFrom && r.monthKey <= isTo),
+    periodLabel: `${isFrom} ~ ${isTo}`,
+    periodMatch: r => r.monthKey && r.monthKey >= isFrom && r.monthKey <= isTo
   })), period === "monthly" && !hasMonthly && /*#__PURE__*/React.createElement(Card, {
     className: "p-8 text-center",
     style: {
@@ -4644,6 +4656,556 @@ function FinancialStatementBlock({
     bsRows: bsRows,
     depth: depth
   }))));
+}
+
+/* ─── 기간별 내부거래 매출 명세 ─── 
+ * 연결 모드 + 임의 기간(연간/월간 범위)에서 매출마스터의 내부거래=Y 데이터 명세 표시
+ */
+function IntercoAnalysisPeriod({
+  financialFiltered,
+  salesFiltered,
+  periodLabel,
+  periodMatch
+}) {
+  // 매출마스터 — 해당 기간의 내부거래 행
+  const intercoRows = salesFiltered.filter(r => r.매출여부 === "매출" && r.내부거래 === true && STANDARD_ENTITIES.includes(r.entity));
+
+  // 데이터 없으면 카드 자체를 띄우지 않음
+  if (intercoRows.length === 0) return null;
+
+  // 합계
+  const totalAmount = intercoRows.reduce((s, r) => s + r.amount, 0);
+
+  // 연결 매출액 (참고 비교)
+  const consolSales = financialFiltered.filter(r => r.statement === "IS" && r.entity === CONSOLIDATED && periodMatch(r) && r.대분류 === "매출액").reduce((s, r) => s + r.amount, 0);
+  const indivSales = financialFiltered.filter(r => r.statement === "IS" && STANDARD_ENTITIES.includes(r.entity) && periodMatch(r) && r.대분류 === "매출액").reduce((s, r) => s + r.amount, 0);
+  const isGap = indivSales - consolSales;
+
+  // 매출법인별 합계
+  const byEntity = (() => {
+    const m = new Map();
+    intercoRows.forEach(r => {
+      m.set(r.entity, (m.get(r.entity) || 0) + r.amount);
+    });
+    const arr = Array.from(m, ([entity, value]) => ({
+      entity,
+      value
+    })).sort((a, b) => b.value - a.value);
+    return arr;
+  })();
+
+  // 거래처-법인 매트릭스 (어디 → 어디로 거래)
+  const byPair = (() => {
+    const m = new Map();
+    intercoRows.forEach(r => {
+      const k = `${r.entity}|${r.거래처 || "(미지정)"}`;
+      m.set(k, (m.get(k) || 0) + r.amount);
+    });
+    return Array.from(m, ([k, value]) => {
+      const [매출법인, 거래처] = k.split("|");
+      return {
+        매출법인,
+        거래처,
+        value
+      };
+    }).sort((a, b) => b.value - a.value);
+  })();
+  return /*#__PURE__*/React.createElement(Card, {
+    className: "p-5"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-start justify-between mb-4 flex-wrap gap-2"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "text-xs uppercase tracking-wider",
+    style: {
+      color: COLOR.gold,
+      letterSpacing: "0.12em",
+      fontWeight: 600
+    }
+  }, "\uB0B4\uBD80\uAC70\uB798 \uB9E4\uCD9C \uBA85\uC138"), /*#__PURE__*/React.createElement("div", {
+    className: "text-[11px] mt-1",
+    style: {
+      color: COLOR.textDim,
+      lineHeight: 1.5
+    }
+  }, "\uB9E4\uCD9C\uB9C8\uC2A4\uD130\uC758 ", /*#__PURE__*/React.createElement("b", null, "\uB0B4\uBD80\uAC70\uB798 = Y"), " \uD589 \u2014 \uADF8\uB8F9 \uB0B4 \uBC95\uC778 \uAC04 \uAC70\uB798 (\uC5F0\uACB0 \uC2DC \uC81C\uAC70\uB428)")), /*#__PURE__*/React.createElement(Pill, {
+    color: COLOR.purple
+  }, periodLabel, " \xB7 ", intercoRows.length, "\uAC74")), (() => {
+    const diff = isGap - totalAmount; // (개별−연결) − 내부거래Y
+    const isMatch = Math.abs(diff) < 100000; // 10만원 이내면 일치로 간주
+    const matchPct = totalAmount > 0 && isGap > 0 ? Math.min(100, Math.min(totalAmount, isGap) / Math.max(totalAmount, isGap) * 100) : 0;
+    return /*#__PURE__*/React.createElement(Card, {
+      className: "p-4 mb-4",
+      style: {
+        background: isMatch ? `${COLOR.success}08` : `${COLOR.warn}08`,
+        border: `1px solid ${isMatch ? COLOR.success : COLOR.warn}40`
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "flex items-center gap-2 mb-3"
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 16
+      }
+    }, isMatch ? "✓" : "⚠"), /*#__PURE__*/React.createElement("span", {
+      className: "text-[12px] uppercase font-bold",
+      style: {
+        color: isMatch ? COLOR.success : COLOR.warn,
+        letterSpacing: "0.12em"
+      }
+    }, isMatch ? "검증 일치" : "검증 차이 발견"), /*#__PURE__*/React.createElement("span", {
+      className: "text-[11px]",
+      style: {
+        color: COLOR.textMute,
+        marginLeft: 8
+      }
+    }, "\uC7AC\uBB34\uC81C\uD45C \uCC28\uC774 = \uB9E4\uCD9C\uB9C8\uC2A4\uD130 \uB0B4\uBD80\uAC70\uB798 \uD569\uACC4 \uBE44\uAD50")), /*#__PURE__*/React.createElement("div", {
+      className: "grid grid-cols-1 md:grid-cols-3 gap-4 items-center"
+    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      className: "text-[10px]",
+      style: {
+        color: COLOR.textMute,
+        letterSpacing: "0.1em"
+      }
+    }, "\u2460 \uC7AC\uBB34\uC81C\uD45C \uCC28\uC774"), /*#__PURE__*/React.createElement("div", {
+      className: "text-[10px]",
+      style: {
+        color: COLOR.textMute,
+        marginTop: 1
+      }
+    }, "\uAC1C\uBCC4 5\uC0AC \uD569 \u2212 \uC5F0\uACB0"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 20,
+        fontFamily: MONO,
+        fontWeight: 700,
+        color: COLOR.text,
+        marginTop: 4
+      }
+    }, fmtKRW(isGap)), /*#__PURE__*/React.createElement("div", {
+      className: "text-[10px] mt-1",
+      style: {
+        color: COLOR.textMute,
+        fontFamily: MONO
+      }
+    }, fmtKRW(indivSales), " \u2212 ", fmtKRW(consolSales))), /*#__PURE__*/React.createElement("div", {
+      className: "text-center"
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 36,
+        fontWeight: 700,
+        color: isMatch ? COLOR.success : COLOR.warn,
+        fontFamily: MONO
+      }
+    }, isMatch ? "=" : "≠"), /*#__PURE__*/React.createElement("div", {
+      className: "text-[10px]",
+      style: {
+        color: COLOR.textMute,
+        marginTop: 4
+      }
+    }, isMatch ? "검증 통과" : /*#__PURE__*/React.createElement(React.Fragment, null, "\uCC28\uC774 ", /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: COLOR.warn,
+        fontFamily: MONO
+      }
+    }, fmtKRW(Math.abs(diff)))))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "text-[10px]",
+      style: {
+        color: COLOR.textMute,
+        letterSpacing: "0.1em"
+      }
+    }, "\u2461 \uB9E4\uCD9C\uB9C8\uC2A4\uD130"), /*#__PURE__*/React.createElement("div", {
+      className: "text-[10px]",
+      style: {
+        color: COLOR.textMute,
+        marginTop: 1
+      }
+    }, "\uB0B4\uBD80\uAC70\uB798 Y \uD569\uACC4"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 20,
+        fontFamily: MONO,
+        fontWeight: 700,
+        color: COLOR.purple,
+        marginTop: 4
+      }
+    }, fmtKRW(totalAmount)), /*#__PURE__*/React.createElement("div", {
+      className: "text-[10px] mt-1",
+      style: {
+        color: COLOR.textMute,
+        fontFamily: MONO
+      }
+    }, intercoRows.length, "\uAC74 \xB7 ", byEntity.length, "\uAC1C \uBC95\uC778"))), !isMatch && /*#__PURE__*/React.createElement("div", {
+      className: "mt-3 pt-3 text-[11px]",
+      style: {
+        borderTop: `1px dashed ${COLOR.warn}40`,
+        color: COLOR.textDim,
+        lineHeight: 1.5
+      }
+    }, /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: COLOR.warn
+      }
+    }, "\uCC28\uC774 \uC6D0\uC778 \uAC00\uB2A5\uC131:"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        marginLeft: 6
+      }
+    }, "\u25B8 \uB9E4\uCD9C\uB9C8\uC2A4\uD130\uC5D0 \uB0B4\uBD80\uAC70\uB798 \uD45C\uAE30 \uB204\uB77D", /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: COLOR.rule,
+        margin: "0 6px"
+      }
+    }, "\xB7"), "\u25B8 \uB9E4\uCD9C\uC6D0\uAC00/\uD310\uAD00\uBE44 \uD56D\uBAA9\uC758 \uB0B4\uBD80\uAC70\uB798 (\uC7AC\uBB34\uC81C\uD45C \uCC28\uC774\uB294 IS \uC804\uCCB4 \uBC18\uC601)", /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: COLOR.rule,
+        margin: "0 6px"
+      }
+    }, "\xB7"), "\u25B8 \uC778\uC2DD \uC2DC\uC810 \uCC28\uC774 (\uC6D4\uB9D0 \uB9C8\uAC10)")));
+  })(), /*#__PURE__*/React.createElement("div", {
+    className: "grid grid-cols-2 md:grid-cols-4 gap-3 mb-5"
+  }, /*#__PURE__*/React.createElement(Card, {
+    className: "p-3",
+    style: {
+      background: `${COLOR.purple}08`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute,
+      letterSpacing: "0.1em"
+    }
+  }, "\uB0B4\uBD80\uAC70\uB798 \uD569\uACC4"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontFamily: MONO,
+      fontWeight: 700,
+      color: COLOR.purple,
+      marginTop: 4
+    }
+  }, fmtKRW(totalAmount)), /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute,
+      marginTop: 2
+    }
+  }, "\uB9E4\uCD9C\uB9C8\uC2A4\uD130 \uAE30\uC900")), /*#__PURE__*/React.createElement(Card, {
+    className: "p-3",
+    style: {
+      background: `${COLOR.gold}08`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute,
+      letterSpacing: "0.1em"
+    }
+  }, "\uAC1C\uBCC4 5\uC0AC \uD569 (\uB9E4\uCD9C\uC561)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 16,
+      fontFamily: MONO,
+      fontWeight: 600,
+      color: COLOR.text,
+      marginTop: 4
+    }
+  }, fmtKRW(indivSales)), /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute,
+      marginTop: 2
+    }
+  }, "\uC7AC\uBB34\uC81C\uD45C \uB2E8\uC21C\uD569\uC0B0")), /*#__PURE__*/React.createElement(Card, {
+    className: "p-3",
+    style: {
+      background: `${COLOR.info}08`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute,
+      letterSpacing: "0.1em"
+    }
+  }, "\uC5F0\uACB0 \uB9E4\uCD9C\uC561"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 16,
+      fontFamily: MONO,
+      fontWeight: 600,
+      color: COLOR.text,
+      marginTop: 4
+    }
+  }, fmtKRW(consolSales)), /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute,
+      marginTop: 2
+    }
+  }, "(\uB0B4\uBD80\uAC70\uB798 \uC81C\uAC70 \uD6C4)")), /*#__PURE__*/React.createElement(Card, {
+    className: "p-3",
+    style: {
+      background: `${COLOR.success}08`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute,
+      letterSpacing: "0.1em"
+    }
+  }, "\uC81C\uAC70 \uBE44\uC728"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 16,
+      fontFamily: MONO,
+      fontWeight: 600,
+      color: COLOR.success,
+      marginTop: 4
+    }
+  }, indivSales > 0 ? (isGap / indivSales * 100).toFixed(1) + "%" : "-"), /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute,
+      marginTop: 2
+    }
+  }, "\uC804\uCCB4 \uB300\uBE44 \uB0B4\uBD80\uAC70\uB798 \uBE44\uC911"))), byEntity.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "mb-5"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-[12px] font-semibold mb-2",
+    style: {
+      color: COLOR.text
+    }
+  }, "\uB9E4\uCD9C\uBC95\uC778\uBCC4 \uB0B4\uBD80\uAC70\uB798 \uD569\uACC4"), /*#__PURE__*/React.createElement("div", {
+    className: "space-y-2"
+  }, byEntity.map((e, k) => {
+    const pct = totalAmount > 0 ? e.value / totalAmount * 100 : 0;
+    return /*#__PURE__*/React.createElement("div", {
+      key: k,
+      className: "text-[11px]"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "flex items-center justify-between mb-1"
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: COLOR.text,
+        fontWeight: 500
+      }
+    }, e.entity), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: MONO,
+        color: COLOR.purple,
+        fontWeight: 600
+      }
+    }, fmtKRW(e.value), " ", /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: COLOR.textMute,
+        fontWeight: 400
+      }
+    }, "\xB7 ", pct.toFixed(1), "%"))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: 5,
+        background: COLOR.surfaceEl,
+        borderRadius: 2.5,
+        overflow: "hidden"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: `${pct}%`,
+        height: "100%",
+        background: COLOR.purple
+      }
+    })));
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "mb-5"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-[12px] font-semibold mb-2",
+    style: {
+      color: COLOR.text
+    }
+  }, "\uAC70\uB798\uCC98-\uBC95\uC778 \uB9E4\uD2B8\uB9AD\uC2A4 (", byPair.length, "\uC30D)"), /*#__PURE__*/React.createElement("div", {
+    className: "rounded-lg overflow-hidden",
+    style: {
+      border: `1px solid ${COLOR.border}`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "overflow-auto",
+    style: {
+      maxHeight: 280
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "w-full text-[11px]",
+    style: {
+      borderCollapse: "collapse"
+    }
+  }, /*#__PURE__*/React.createElement("thead", {
+    style: {
+      position: "sticky",
+      top: 0,
+      background: COLOR.surfaceEl,
+      zIndex: 1
+    }
+  }, /*#__PURE__*/React.createElement("tr", {
+    style: {
+      borderBottom: `1px solid ${COLOR.borderHi}`
+    }
+  }, /*#__PURE__*/React.createElement("th", {
+    style: thStyle
+  }, "\uB9E4\uCD9C\uBC95\uC778 (\uACF5\uAE09)"), /*#__PURE__*/React.createElement("th", {
+    style: thStyle
+  }, "\u2192 \uAC70\uB798\uCC98 (\uAD6C\uB9E4)"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, "\uAE08\uC561"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, "\uBE44\uC911"))), /*#__PURE__*/React.createElement("tbody", null, byPair.map((p, k) => /*#__PURE__*/React.createElement("tr", {
+    key: k,
+    style: {
+      borderBottom: `1px dashed ${COLOR.border}`
+    }
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      fontWeight: 500
+    }
+  }, p.매출법인), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      color: COLOR.textDim
+    }
+  }, p.거래처), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      color: COLOR.purple,
+      fontWeight: 600
+    }
+  }, Math.round(p.value).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      color: COLOR.textMute
+    }
+  }, totalAmount > 0 ? (p.value / totalAmount * 100).toFixed(1) + "%" : "-")))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", {
+    style: {
+      background: COLOR.surfaceEl,
+      borderTop: `2px solid ${COLOR.borderHi}`
+    }
+  }, /*#__PURE__*/React.createElement("td", {
+    colSpan: 2,
+    style: {
+      ...tdStyle,
+      fontWeight: 700
+    }
+  }, "\uD569\uACC4"), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      fontWeight: 700,
+      color: COLOR.purple
+    }
+  }, Math.round(totalAmount).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      fontWeight: 700
+    }
+  }, "100.0%"))))))), /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", {
+    style: {
+      cursor: "pointer",
+      fontSize: 12,
+      fontWeight: 600,
+      color: COLOR.gold,
+      padding: "6px 0"
+    }
+  }, "\u25B8 \uC0C1\uC138 \uAC70\uB798 \uB0B4\uC5ED \uBCF4\uAE30 (", intercoRows.length, "\uAC74)"), /*#__PURE__*/React.createElement("div", {
+    className: "mt-2 rounded-lg overflow-hidden",
+    style: {
+      border: `1px solid ${COLOR.border}`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "overflow-auto",
+    style: {
+      maxHeight: 360
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "w-full text-[11px]",
+    style: {
+      borderCollapse: "collapse"
+    }
+  }, /*#__PURE__*/React.createElement("thead", {
+    style: {
+      position: "sticky",
+      top: 0,
+      background: COLOR.surfaceEl,
+      zIndex: 1
+    }
+  }, /*#__PURE__*/React.createElement("tr", {
+    style: {
+      borderBottom: `1px solid ${COLOR.borderHi}`
+    }
+  }, /*#__PURE__*/React.createElement("th", {
+    style: thStyle
+  }, "\uC77C\uC790"), /*#__PURE__*/React.createElement("th", {
+    style: thStyle
+  }, "\uB9E4\uCD9C\uBC95\uC778"), /*#__PURE__*/React.createElement("th", {
+    style: thStyle
+  }, "\uAC70\uB798\uCC98"), /*#__PURE__*/React.createElement("th", {
+    style: thStyle
+  }, "\uD488\uBAA9"), /*#__PURE__*/React.createElement("th", {
+    style: thStyle
+  }, "\uAD6C\uBD84"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, "\uAE08\uC561"))), /*#__PURE__*/React.createElement("tbody", null, intercoRows.slice().sort((a, b) => b.amount - a.amount).map((r, k) => /*#__PURE__*/React.createElement("tr", {
+    key: k,
+    style: {
+      borderBottom: `1px dashed ${COLOR.border}`
+    }
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      color: COLOR.textDim,
+      fontFamily: MONO,
+      fontSize: 10
+    }
+  }, r.date || "-"), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      fontWeight: 500
+    }
+  }, r.entity), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      color: COLOR.textDim
+    }
+  }, r.거래처), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      color: COLOR.textDim,
+      maxWidth: 200,
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+      textOverflow: "ellipsis"
+    },
+    title: r.품목
+  }, r.품목), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      color: COLOR.textDim,
+      fontSize: 10
+    }
+  }, r.구분1), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO
+    }
+  }, Math.round(r.amount).toLocaleString())))))))));
 }
 function BsEmptyHint() {
   return /*#__PURE__*/React.createElement("div", {
@@ -8018,8 +8580,10 @@ function OrdersView({
     });
   }, [ordersWithReal, globalEntity, global담당조직, global변경상태]);
 
-  // 계획 금액 선택 (최초 vs 변경)
-  const planOf = r => planMode === "최초계획" ? r.최초계획예상매출 : r.변경후예상매출;
+  // 계획 금액 선택 (최초 vs 변경) — '전체' 모드일 때는 변경계획 기준 (보수적)
+  const showBoth = planMode === "전체";
+  const effectivePlanMode = planMode === "전체" ? "변경계획" : planMode;
+  const planOf = r => effectivePlanMode === "최초계획" ? r.최초계획예상매출 : r.변경후예상매출;
 
   // ─── 법인별 집계 ───
   const byEntity = useMemo(() => {
@@ -8069,7 +8633,7 @@ function OrdersView({
         o.real = sum;
         o.matched = matchedProjs;
       }
-      o.plan = planMode === "최초계획" ? o.최초 : o.변경;
+      o.plan = effectivePlanMode === "최초계획" ? o.최초 : o.변경;
       o.달성률 = o.plan > 0 ? o.real / o.plan * 100 : null;
       o.잔여 = o.plan - o.real;
     });
@@ -8086,7 +8650,7 @@ function OrdersView({
     const 변동건수 = baseFiltered.filter(r => r.변동있음).length;
     const dropCount = baseFiltered.filter(r => r.drop).length;
     const dropAmount = baseFiltered.filter(r => r.drop).reduce((s, r) => s + r.최초계획예상매출, 0);
-    const plan = planMode === "최초계획" ? 최초 : 변경;
+    const plan = effectivePlanMode === "최초계획" ? 최초 : 변경;
     return {
       최초,
       변경,
@@ -8107,7 +8671,8 @@ function OrdersView({
   const sixtyProjects = useMemo(() => {
     return baseFiltered.filter(r => r.entity === "식스티헤르츠").map(r => ({
       ...r,
-      plan: planMode === "최초계획" ? r.최초계획예상매출 : r.변경후예상매출
+      plan: effectivePlanMode === "최초계획" ? r.최초계획예상매출 : r.변경후예상매출,
+      계약금액: effectivePlanMode === "최초계획" ? r.기존계약금액 : r.변경계약금액
     })).map(r => ({
       ...r,
       잔여: r.plan - r.real,
@@ -8126,6 +8691,8 @@ function OrdersView({
         최초: 0,
         변경: 0,
         future: 0,
+        기존계약: 0,
+        변경계약: 0,
         count: 0,
         거래처들: new Set(),
         변동: 0,
@@ -8137,6 +8704,8 @@ function OrdersView({
       g.최초 += r.최초계획예상매출;
       g.변경 += r.변경후예상매출;
       g.future += r.이후매출;
+      g.기존계약 += r.기존계약금액 || 0;
+      g.변경계약 += r.변경계약금액 || 0;
       g.count += 1;
       if (r.거래처) g.거래처들.add(r.거래처);
       if (r.변동있음) {
@@ -8150,13 +8719,15 @@ function OrdersView({
     const arr = [...groups.values()].map(g => {
       const entityMap = realByEntityProject[g.entity] || {};
       const real = entityMap[g.프로젝트명] != null ? entityMap[g.프로젝트명] : 0;
-      const plan = planMode === "최초계획" ? g.최초 : g.변경;
+      const plan = effectivePlanMode === "최초계획" ? g.최초 : g.변경;
+      const 계약금액 = effectivePlanMode === "최초계획" ? g.기존계약 : g.변경계약;
       return {
         ...g,
         거래처수: g.거래처들.size,
         거래처목록: [...g.거래처들].join(", "),
         plan,
         real,
+        계약금액,
         잔여: plan - real,
         달성률: plan > 0 ? real / plan * 100 : null,
         상태리스트: [...g.상태들].join(", ")
@@ -8242,6 +8813,11 @@ function OrdersView({
         변동구분: r.변동구분,
         변동있음: r.변동있음,
         drop: r.drop,
+        계약금액: r.계약금액 || 0,
+        기존계약: r.기존계약금액 || 0,
+        변경계약: r.변경계약금액 || 0,
+        최초plan: r.최초계획예상매출 || 0,
+        변경plan: r.변경후예상매출 || 0,
         plan: r.plan,
         real: r.real,
         잔여: r.잔여,
@@ -8261,6 +8837,11 @@ function OrdersView({
         변동구분: [...g.변동상세].join(" / "),
         변동있음: g.변동 > 0,
         drop: g.drop > 0,
+        계약금액: g.계약금액 || 0,
+        기존계약: g.기존계약 || 0,
+        변경계약: g.변경계약 || 0,
+        최초plan: g.최초 || 0,
+        변경plan: g.변경 || 0,
         plan: g.plan,
         real: g.real,
         잔여: g.잔여,
@@ -8293,10 +8874,16 @@ function OrdersView({
     return COLOR.danger;
   };
   const downloadCsv = () => {
-    const headers = ["타입", "법인명", "담당조직", "거래처", "프로젝트", "프로젝트코드", "변경상태", "변동구분", "건수", "계획", "실적", "잔여", "달성률(%)"];
+    const headers = showBoth ? ["타입", "법인명", "담당조직", "거래처", "프로젝트", "프로젝트코드", "변경상태", "변동구분", "건수", "기존계약금액", "변경계약금액", "최초계획", "변경계획", "실적", "잔여", "달성률(%)"] : ["타입", "법인명", "담당조직", "거래처", "프로젝트", "프로젝트코드", "변경상태", "변동구분", "건수", effectivePlanMode === "최초계획" ? "기존계약금액" : "변경계약금액", "계획", "실적", "잔여", "달성률(%)"];
     const csv = [headers.join(",")];
     detailRows.forEach(r => {
-      csv.push([r.type === "group" ? "그룹" : "단건", r.entity, r.담당조직 || "", '"' + (r.거래처 || "").replace(/"/g, '""') + '"', '"' + (r.프로젝트명 || "").replace(/"/g, '""') + '"', r.프로젝트코드 || "", r.변경상태 || "", '"' + (r.변동구분 || "") + '"', r.count, Math.round(r.plan), Math.round(r.real), Math.round(r.잔여), r.달성률 != null ? r.달성률.toFixed(1) : ""].join(","));
+      const base = [r.type === "group" ? "그룹" : "단건", r.entity, r.담당조직 || "", '"' + (r.거래처 || "").replace(/"/g, '""') + '"', '"' + (r.프로젝트명 || "").replace(/"/g, '""') + '"', r.프로젝트코드 || "", r.변경상태 || "", '"' + (r.변동구분 || "") + '"', r.count];
+      const tail = [Math.round(r.real), Math.round(r.잔여), r.달성률 != null ? r.달성률.toFixed(1) : ""];
+      if (showBoth) {
+        csv.push([...base, Math.round(r.기존계약 || 0), Math.round(r.변경계약 || 0), Math.round(r.최초plan || 0), Math.round(r.변경plan || 0), ...tail].join(","));
+      } else {
+        csv.push([...base, Math.round(r.계약금액 || 0), Math.round(r.plan), ...tail].join(","));
+      }
     });
     const blob = new Blob(["\uFEFF" + csv.join("\n")], {
       type: "text/csv;charset=utf-8;"
@@ -8385,7 +8972,7 @@ function OrdersView({
       color: COLOR.textMute,
       letterSpacing: "0.1em"
     }
-  }, "\uAE30\uC900"), ["최초계획", "변경계획"].map(m => /*#__PURE__*/React.createElement("button", {
+  }, "\uAE30\uC900"), ["전체", "최초계획", "변경계획"].map(m => /*#__PURE__*/React.createElement("button", {
     key: m,
     onClick: () => setPlanMode(m),
     style: {
@@ -8399,11 +8986,11 @@ function OrdersView({
       cursor: "pointer"
     }
   }, m)))), /*#__PURE__*/React.createElement("div", {
-    className: "grid grid-cols-2 md:grid-cols-4"
-  }, /*#__PURE__*/React.createElement("div", {
+    className: showBoth ? "grid grid-cols-2 md:grid-cols-5" : "grid grid-cols-2 md:grid-cols-4"
+  }, showBoth && /*#__PURE__*/React.createElement("div", {
     className: "p-5",
     style: {
-      background: `${COLOR.gold}12`,
+      background: `${COLOR.gold}10`,
       borderRight: `1px solid ${COLOR.gold}25`
     }
   }, /*#__PURE__*/React.createElement("div", {
@@ -8421,7 +9008,7 @@ function OrdersView({
       color: COLOR.gold,
       letterSpacing: "0.15em"
     }
-  }, planMode)), /*#__PURE__*/React.createElement("div", {
+  }, "\uCD5C\uCD08\uACC4\uD68D")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       alignItems: "baseline",
@@ -8429,10 +9016,10 @@ function OrdersView({
       color: COLOR.text
     }
   }, (() => {
-    const v = fmtKRWSplit(summary.plan);
+    const v = fmtKRWSplit(summary.최초);
     return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
       style: {
-        fontSize: 32,
+        fontSize: 28,
         fontFamily: MONO,
         fontWeight: 700,
         lineHeight: 1,
@@ -8440,7 +9027,7 @@ function OrdersView({
       }
     }, v.sign, v.num), /*#__PURE__*/React.createElement("span", {
       style: {
-        fontSize: 14,
+        fontSize: 13,
         fontWeight: 500,
         color: COLOR.textDim
       }
@@ -8450,7 +9037,57 @@ function OrdersView({
     style: {
       color: COLOR.textMute
     }
-  }, planMode === "최초계획" ? "초기 목표" : `최초 대비 ${summary.gap === 0 ? "동일" : (summary.gap > 0 ? "−" : "+") + fmtKRW(Math.abs(summary.gap))}`)), /*#__PURE__*/React.createElement("div", {
+  }, "\uCD08\uAE30 \uBAA9\uD45C")), /*#__PURE__*/React.createElement("div", {
+    className: "p-5",
+    style: {
+      background: `${COLOR.gold}14`,
+      borderRight: `1px solid ${COLOR.gold}25`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-1.5 mb-3"
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 6,
+      height: 6,
+      background: COLOR.gold,
+      borderRadius: 1
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "text-[10px] uppercase font-bold",
+    style: {
+      color: COLOR.gold,
+      letterSpacing: "0.15em"
+    }
+  }, showBoth ? "변경계획" : planMode)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "baseline",
+      gap: 4,
+      color: COLOR.text
+    }
+  }, (() => {
+    const v = fmtKRWSplit(showBoth ? summary.변경 : summary.plan);
+    return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: showBoth ? 28 : 32,
+        fontFamily: MONO,
+        fontWeight: 700,
+        lineHeight: 1,
+        letterSpacing: "-0.02em"
+      }
+    }, v.sign, v.num), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: showBoth ? 13 : 14,
+        fontWeight: 500,
+        color: COLOR.textDim
+      }
+    }, v.unit));
+  })()), /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px] mt-2",
+    style: {
+      color: COLOR.textMute
+    }
+  }, showBoth ? `최초 대비 ${summary.gap === 0 ? "동일" : (summary.gap > 0 ? "−" : "+") + fmtKRW(Math.abs(summary.gap))}` : effectivePlanMode === "최초계획" ? "초기 목표" : `최초 대비 ${summary.gap === 0 ? "동일" : (summary.gap > 0 ? "−" : "+") + fmtKRW(Math.abs(summary.gap))}`)), /*#__PURE__*/React.createElement("div", {
     className: "p-5",
     style: {
       background: `${COLOR.success}12`,
@@ -8481,7 +9118,7 @@ function OrdersView({
     const v = fmtKRWSplit(totalReal);
     return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
       style: {
-        fontSize: 32,
+        fontSize: showBoth ? 28 : 32,
         fontFamily: MONO,
         fontWeight: 700,
         lineHeight: 1,
@@ -8490,7 +9127,7 @@ function OrdersView({
       }
     }, v.sign, v.num), /*#__PURE__*/React.createElement("span", {
       style: {
-        fontSize: 14,
+        fontSize: showBoth ? 13 : 14,
         fontWeight: 500,
         color: COLOR.success,
         opacity: 0.7
@@ -8532,7 +9169,7 @@ function OrdersView({
     const v = fmtKRWSplit(overallRemain);
     return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
       style: {
-        fontSize: 32,
+        fontSize: showBoth ? 28 : 32,
         fontFamily: MONO,
         fontWeight: 700,
         lineHeight: 1,
@@ -8541,7 +9178,7 @@ function OrdersView({
       }
     }, v.sign, v.num), /*#__PURE__*/React.createElement("span", {
       style: {
-        fontSize: 14,
+        fontSize: showBoth ? 13 : 14,
         fontWeight: 500,
         color: overallRemain > 0 ? COLOR.danger : COLOR.textMute,
         opacity: 0.7
@@ -8552,7 +9189,7 @@ function OrdersView({
     style: {
       color: COLOR.textMute
     }
-  }, "\uACC4\uD68D \u2212 \uC2E4\uC801")), /*#__PURE__*/React.createElement("div", {
+  }, showBoth ? "변경계획 − 실적" : "계획 − 실적")), /*#__PURE__*/React.createElement("div", {
     className: "p-5",
     style: {
       background: `${달성률Color(overallPct)}18`
@@ -8580,7 +9217,7 @@ function OrdersView({
     }
   }, /*#__PURE__*/React.createElement("span", {
     style: {
-      fontSize: 36,
+      fontSize: showBoth ? 32 : 36,
       fontFamily: MONO,
       fontWeight: 700,
       lineHeight: 1,
@@ -8589,7 +9226,7 @@ function OrdersView({
     }
   }, overallPct != null ? overallPct.toFixed(1) : "-"), /*#__PURE__*/React.createElement("span", {
     style: {
-      fontSize: 16,
+      fontSize: showBoth ? 14 : 16,
       fontWeight: 500,
       color: 달성률Color(overallPct),
       opacity: 0.7
@@ -8709,16 +9346,20 @@ function OrdersView({
       color: COLOR.textMute,
       letterSpacing: "0.12em"
     }
-  }, "\uBC95\uC778\uBCC4 \u2014 ", planMode, " \xB7 \uC2E4\uC801 \xB7 \uC794\uC5EC"), /*#__PURE__*/React.createElement("div", {
+  }, "\uBC95\uC778\uBCC4 \u2014 ", showBoth ? "최초 · 변경 · 실적 · 잔여" : `${planMode} · 실적 · 잔여`), /*#__PURE__*/React.createElement("div", {
     className: "text-[11px] mt-0.5",
     style: {
       color: COLOR.textDim
     }
-  }, "\uAE30\uC900: ", /*#__PURE__*/React.createElement("b", {
+  }, showBoth ? /*#__PURE__*/React.createElement(React.Fragment, null, "\uB2EC\uC131\uB960 = ", /*#__PURE__*/React.createElement("b", {
     style: {
       color: COLOR.gold
     }
-  }, planMode), " \uAE08\uC561\uC73C\uB85C \uB2EC\uC131\uB960 \uACC4\uC0B0"))), /*#__PURE__*/React.createElement("div", {
+  }, "\uBCC0\uACBD\uACC4\uD68D"), " \uAE30\uC900") : /*#__PURE__*/React.createElement(React.Fragment, null, "\uAE30\uC900: ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: COLOR.gold
+    }
+  }, planMode), " \uAE08\uC561\uC73C\uB85C \uB2EC\uC131\uB960 \uACC4\uC0B0")))), /*#__PURE__*/React.createElement("div", {
     className: "rounded-lg overflow-hidden",
     style: {
       border: `1px solid ${COLOR.border}`
@@ -8740,12 +9381,17 @@ function OrdersView({
       ...thStyle,
       textAlign: "right"
     }
-  }, "\uAC74\uC218"), /*#__PURE__*/React.createElement("th", {
+  }, "\uAC74\uC218"), showBoth && /*#__PURE__*/React.createElement("th", {
     style: {
       ...thStyle,
       textAlign: "right"
     }
-  }, planMode), /*#__PURE__*/React.createElement("th", {
+  }, "\uCD5C\uCD08\uACC4\uD68D"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, showBoth ? "변경계획" : planMode), /*#__PURE__*/React.createElement("th", {
     style: {
       ...thStyle,
       textAlign: "right"
@@ -8763,7 +9409,7 @@ function OrdersView({
   }, "\uB2EC\uC131\uB960"), /*#__PURE__*/React.createElement("th", {
     style: {
       ...thStyle,
-      width: 160
+      width: 140
     }
   }, "\uC9C4\uD589"), /*#__PURE__*/React.createElement("th", {
     style: {
@@ -8787,13 +9433,20 @@ function OrdersView({
       fontFamily: MONO,
       color: COLOR.textDim
     }
-  }, o.count), /*#__PURE__*/React.createElement("td", {
+  }, o.count), showBoth && /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      color: COLOR.textDim
+    }
+  }, Math.round(o.최초).toLocaleString()), /*#__PURE__*/React.createElement("td", {
     style: {
       ...tdStyle,
       textAlign: "right",
       fontFamily: MONO
     }
-  }, Math.round(o.plan).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+  }, Math.round(showBoth ? o.변경 : o.plan).toLocaleString()), /*#__PURE__*/React.createElement("td", {
     style: {
       ...tdStyle,
       textAlign: "right",
@@ -8867,14 +9520,22 @@ function OrdersView({
       fontFamily: MONO,
       fontWeight: 700
     }
-  }, summary.건수), /*#__PURE__*/React.createElement("td", {
+  }, summary.건수), showBoth && /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      fontWeight: 700,
+      color: COLOR.textDim
+    }
+  }, Math.round(summary.최초).toLocaleString()), /*#__PURE__*/React.createElement("td", {
     style: {
       ...tdStyle,
       textAlign: "right",
       fontFamily: MONO,
       fontWeight: 700
     }
-  }, Math.round(summary.plan).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+  }, Math.round(showBoth ? summary.변경 : summary.plan).toLocaleString()), /*#__PURE__*/React.createElement("td", {
     style: {
       ...tdStyle,
       textAlign: "right",
@@ -9078,7 +9739,7 @@ function OrdersView({
       color: COLOR.textMute,
       letterSpacing: "0.12em"
     }
-  }, "\uD504\uB85C\uC81D\uD2B8 \uC0C1\uC138 \u2014 ", planMode, " \uAE30\uC900"), /*#__PURE__*/React.createElement("div", {
+  }, "\uD504\uB85C\uC81D\uD2B8 \uC0C1\uC138 \u2014 ", showBoth ? "최초·변경 비교" : `${planMode} 기준`), /*#__PURE__*/React.createElement("div", {
     className: "text-[11px] mt-0.5",
     style: {
       color: COLOR.textDim
@@ -9159,12 +9820,37 @@ function OrdersView({
     }
   }, "\uAC74\uC218"), /*#__PURE__*/React.createElement("th", {
     style: thStyle
-  }, "\uBCC0\uACBD\uC0C1\uD0DC"), /*#__PURE__*/React.createElement("th", {
+  }, "\uBCC0\uACBD\uC0C1\uD0DC"), showBoth ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("th", {
     style: {
       ...thStyle,
       textAlign: "right"
     }
-  }, planMode), /*#__PURE__*/React.createElement("th", {
+  }, "\uAE30\uC874\uACC4\uC57D"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, "\uBCC0\uACBD\uACC4\uC57D"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, "\uCD5C\uCD08\uACC4\uD68D"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, "\uBCC0\uACBD\uACC4\uD68D")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, effectivePlanMode === "최초계획" ? "기존계약" : "변경계약"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, planMode)), /*#__PURE__*/React.createElement("th", {
     style: {
       ...thStyle,
       textAlign: "right"
@@ -9248,13 +9934,47 @@ function OrdersView({
       textOverflow: "ellipsis"
     },
     title: r.변경상태
-  }, r.변경상태), /*#__PURE__*/React.createElement("td", {
+  }, r.변경상태), showBoth ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      color: COLOR.textDim
+    }
+  }, r.기존계약 > 0 ? Math.round(r.기존계약).toLocaleString() : "-"), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      color: COLOR.textDim
+    }
+  }, r.변경계약 > 0 ? Math.round(r.변경계약).toLocaleString() : "-"), /*#__PURE__*/React.createElement("td", {
     style: {
       ...tdStyle,
       textAlign: "right",
       fontFamily: MONO
     }
-  }, r.plan === 0 ? "-" : Math.round(r.plan).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+  }, r.최초plan === 0 ? "-" : Math.round(r.최초plan).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      fontWeight: 500
+    }
+  }, r.변경plan === 0 ? "-" : Math.round(r.변경plan).toLocaleString())) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      color: COLOR.textDim
+    }
+  }, r.계약금액 > 0 ? Math.round(r.계약금액).toLocaleString() : "-"), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO
+    }
+  }, r.plan === 0 ? "-" : Math.round(r.plan).toLocaleString())), /*#__PURE__*/React.createElement("td", {
     style: {
       ...tdStyle,
       textAlign: "right",
