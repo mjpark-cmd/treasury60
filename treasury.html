@@ -15,6 +15,7 @@
 <script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <style>
   :root {
@@ -112,6 +113,7 @@ const COLOR = {
   // 시맨틱 컬러 (라이트 테마 톤)
   success: '#2d8a5f',      // 초록 (입금/잔액 +)
   danger: '#c54141',       // 빨강 (출금/잔액 -)
+  warn: '#c89c3d',         // 주황 (경고/관리자 모드)
   info: '#3d6aad',         // 정보 (파랑)
   purple: '#7a5fb5',       // 보라 (한도/R&D)
 };
@@ -489,23 +491,67 @@ function formatTableNumber(v) {
 // ============================================================================
 //  CSV EXPORT
 // ============================================================================
+// 함수명은 'exportCSV' 유지하지만 내부적으로 Excel(.xlsx)을 다운로드 (SheetJS 사용)
+// 호출 시 filename에 .csv 포함되어 있어도 .xlsx로 자동 변환
 function exportCSV(filename, rows, headers) {
-  const headerLine = headers.map(h => `"${h}"`).join(',');
-  const lines = rows.map(row =>
-    headers.map(h => {
+  // SheetJS 미로드 시 CSV 폴백
+  if (typeof XLSX === 'undefined') {
+    console.warn('[exportCSV] XLSX 미로드 - CSV로 폴백');
+    const headerLine = headers.map(h => `"${h}"`).join(',');
+    const lines = rows.map(row =>
+      headers.map(h => {
+        const v = row[h];
+        if (v == null) return '';
+        const s = String(v).replace(/"/g, '""');
+        return `"${s}"`;
+      }).join(',')
+    );
+    const csv = '\uFEFF' + [headerLine, ...lines].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return;
+  }
+  // Excel 변환: 행 데이터를 객체 배열로 정리 (헤더 순서 보장)
+  const data = rows.map(row => {
+    const obj = {};
+    headers.forEach(h => {
       const v = row[h];
-      if (v == null) return '';
-      const s = String(v).replace(/"/g, '""');
-      return `"${s}"`;
-    }).join(',')
-  );
-  const csv = '\uFEFF' + [headerLine, ...lines].join('\r\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+      // 숫자 문자열은 숫자로 자동 변환 (Excel에서 숫자 정렬/계산 가능)
+      if (v == null || v === '') obj[h] = '';
+      else if (typeof v === 'number') obj[h] = v;
+      else if (typeof v === 'string' && /^-?[\d,]+(\.\d+)?$/.test(v.trim())) {
+        const num = Number(v.replace(/,/g, ''));
+        obj[h] = isNaN(num) ? v : num;
+      }
+      else obj[h] = v;
+    });
+    return obj;
+  });
+  const ws = XLSX.utils.json_to_sheet(data, { header: headers });
+  // 컬럼 너비 자동 조정 (한국어 고려해서 헤더+값 최댓값×1.2)
+  const colWidths = headers.map(h => {
+    const headerLen = String(h).length;
+    const maxValLen = data.reduce((m, r) => {
+      const v = r[h];
+      const len = v == null ? 0 : String(v).length;
+      return Math.max(m, len);
+    }, 0);
+    const w = Math.min(40, Math.max(8, Math.max(headerLen, maxValLen) * 1.2));
+    return { wch: w };
+  });
+  ws['!cols'] = colWidths;
+  // 헤더 행 스타일 (SheetJS Community Edition은 셀 스타일 제한 — 굵게 정도)
+  // 시트 이름은 한글 가능, 31자 제한
+  const wb = XLSX.utils.book_new();
+  const sheetName = filename.replace(/\.(csv|xlsx)$/i, '').replace(/[\\\/\?\*\[\]:]/g, '_').slice(0, 31) || 'Sheet1';
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  // 파일명 .csv → .xlsx 변환
+  const xlsxName = filename.replace(/\.csv$/i, '.xlsx').replace(/(\.xlsx)?$/, m => m === '.xlsx' ? m : '.xlsx');
+  XLSX.writeFile(wb, xlsxName);
 }
 
 // ============================================================================
@@ -1121,7 +1167,7 @@ function DateInput({ value, onChange }) {
            style={{ background: COLOR.surface, border: `1px solid ${COLOR.border}`, color: COLOR.text, width: 140, fontFamily: 'var(--mono)' }} />
   );
 }
-function DownloadButton({ onClick, label = 'CSV 다운로드' }) {
+function DownloadButton({ onClick, label = 'Excel 다운로드' }) {
   return (
     <button onClick={onClick} className="px-3 py-1.5 text-xs rounded-lg flex items-center gap-1.5"
             style={{ background: COLOR.surface, border: `1px solid ${COLOR.border}`, color: COLOR.text }}>
@@ -2648,7 +2694,7 @@ function TransactionsView({ metrics }) {
         </div>
         {withBalance.length > 1000 && (
           <div className="px-4 py-3 text-center text-xs" style={{ color: COLOR.textMute, borderTop: `1px solid ${COLOR.border}` }}>
-            상위 1,000건만 표시 · 전체 {withBalance.length}건 (CSV 다운로드 시 전체 포함)
+            상위 1,000건만 표시 · 전체 {withBalance.length}건 (Excel 다운로드 시 전체 포함)
           </div>
         )}
       </Card>
@@ -4333,9 +4379,11 @@ function FinanceDashboard() {
                     try { localStorage.removeItem('finance:v2:adminMode'); } catch {}
                     setAdminMode(false);
                   }
-                }} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px]"
-                   style={{ background: `${COLOR.warn}14`, color: COLOR.warn, border: `1px solid ${COLOR.warn}40`, cursor: 'pointer' }}>
-                  🔓 관리자 모드 (해제)
+                }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors"
+                   style={{ background: `${COLOR.warn}14`, color: COLOR.warn, border: `1px solid ${COLOR.warn}40`, cursor: 'pointer' }}
+                   onMouseEnter={(e) => e.currentTarget.style.background = `${COLOR.warn}22`}
+                   onMouseLeave={(e) => e.currentTarget.style.background = `${COLOR.warn}14`}>
+                  🔓 관리자 모드
                 </button>
               ) : (
                 <button onClick={() => {
@@ -4347,8 +4395,10 @@ function FinanceDashboard() {
                   } else if (pw !== '') {
                     alert('비밀번호가 일치하지 않습니다.');
                   }
-                }} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px]"
-                   style={{ background: COLOR.surfaceEl, color: COLOR.textDim, border: `1px solid ${COLOR.border}`, cursor: 'pointer' }}>
+                }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors"
+                   style={{ background: 'transparent', color: COLOR.textMute, border: `1px solid ${COLOR.border}`, cursor: 'pointer' }}
+                   onMouseEnter={(e) => { e.currentTarget.style.background = COLOR.surfaceEl; e.currentTarget.style.color = COLOR.textDim; }}
+                   onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = COLOR.textMute; }}>
                   🔒 관리자 전환
                 </button>
               )}
@@ -4358,14 +4408,16 @@ function FinanceDashboard() {
                   <Building2 size={14} style={{ color: COLOR.gold }} />{currentEntity}<ChevronDown size={14} style={{ color: COLOR.textDim }} />
                 </button>
                 {entityMenuOpen && (
-                  <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: 4, zIndex: 20, minWidth: 220, background: COLOR.surfaceEl, border: `1px solid ${COLOR.borderHi}`, borderRadius: 8, overflow: 'hidden', boxShadow: '0 10px 30px rgba(0,0,0,0.4)' }}>
+                  <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: 4, zIndex: 20, minWidth: 220, background: COLOR.surface, border: `1px solid ${COLOR.borderHi}`, borderRadius: 8, overflow: 'hidden', boxShadow: '0 10px 30px rgba(26, 37, 68, 0.12)' }}>
                     <button onClick={() => { setEntityFilter('all'); setEntityMenuOpen(false); }}
-                            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 16px', fontSize: 14, background: 'transparent', color: entityFilter === 'all' ? COLOR.gold : COLOR.text }}>전체 법인</button>
+                            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 16px', fontSize: 13, background: entityFilter === 'all' ? `${COLOR.gold}10` : 'transparent', color: entityFilter === 'all' ? COLOR.gold : COLOR.text, fontWeight: entityFilter === 'all' ? 600 : 400, cursor: 'pointer', border: 'none' }}>
+                      {entityFilter === 'all' ? '✓ ' : '   '}전체 법인
+                    </button>
                     <div style={{ height: 1, background: COLOR.border }} />
                     {allEntities.map(e => (
                       <button key={e} onClick={() => { setEntityFilter(e); setEntityMenuOpen(false); }}
-                              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 16px', fontSize: 14, background: 'transparent', color: entityFilter === e ? COLOR.gold : COLOR.text }}>
-                        {e}
+                              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 16px', fontSize: 13, background: entityFilter === e ? `${COLOR.gold}10` : 'transparent', color: entityFilter === e ? COLOR.gold : COLOR.text, fontWeight: entityFilter === e ? 600 : 400, cursor: 'pointer', border: 'none' }}>
+                        {entityFilter === e ? '✓ ' : '   '}{e}
                       </button>
                     ))}
                   </div>
