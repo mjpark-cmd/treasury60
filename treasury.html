@@ -4088,6 +4088,8 @@ function FinanceDashboard() {
   const [data, setData] = useState({ accounts: [], transactions: [], plans: [] });
   const [loaded, setLoaded] = useState(false);
   const [entityMenuOpen, setEntityMenuOpen] = useState(false);
+  // 시트 접근 권한 거부 상태 (자동 동기화 시 핵심 시트 모두 403일 때 true)
+  const [accessDenied, setAccessDenied] = useState(false);
   // 팀 설정 (Google Sheets의 "설정" 탭에서 동기화되는 공용 정보)
   const [teamSettings, setTeamSettings] = useState({ closingMonth: '', closedBy: '', closedAt: '', note: '' });
   // 차입금 현황 (Google Sheets "차입금현황" 탭에서 동기화)
@@ -4221,6 +4223,7 @@ function FinanceDashboard() {
               const permDenied = [accR, txR, planR, settingsR, loansR].filter(r => r.error && r.error.kind === 'permission');
               if (permDenied.length > 0 && [accR, txR, planR].every(r => r.error && r.error.kind === 'permission')) {
                 console.warn('Auto-sync: permission denied for all main sheets');
+                setAccessDenied(true);
                 setAutoConnecting(false);
                 return;
               }
@@ -4379,31 +4382,77 @@ function FinanceDashboard() {
           <TabButton active={tab === 'plans'} onClick={() => setTab('plans')} icon={CalendarIcon}>자금계획</TabButton>
           <TabButton active={tab === 'loans'} onClick={() => setTab('loans')} icon={CreditCard}>차입금</TabButton>
           <TabButton active={tab === 'categories'} onClick={() => setTab('categories')} icon={FilterIcon}>분류 분석</TabButton>
-          <TabButton active={tab === 'import'} onClick={() => setTab('import')} icon={Upload}>데이터 가져오기</TabButton>
+          {adminMode && (
+            <TabButton active={tab === 'import'} onClick={() => setTab('import')} icon={Upload}>데이터 가져오기</TabButton>
+          )}
         </nav>
 
         <main>
-          {!hasData && tab !== 'import' && (
-            <Card className="p-12 text-center">
-              <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: `${COLOR.gold}18`, color: COLOR.gold }}>
-                <Upload size={28} />
+          {/* 시트 접근 권한 거부 시 전체 화면 안내 (관리자 모드는 예외 — import 탭으로 들어가서 설정 변경 가능) */}
+          {accessDenied && !adminMode && (
+            <Card className="p-12 text-center" style={{ background: `${COLOR.warn}06`, borderColor: `${COLOR.warn}40` }}>
+              <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-5" style={{ background: `${COLOR.warn}18`, color: COLOR.warn }}>
+                <Lock size={36} />
               </div>
-              <div className="text-lg font-semibold mb-2" style={{ color: COLOR.text }}>데이터가 없습니다</div>
-              <div className="text-sm mb-6" style={{ color: COLOR.textDim }}>먼저 "데이터 가져오기" 탭에서 CSV 파일을 업로드하세요.</div>
-              <button onClick={() => setTab('import')} className="px-5 py-2.5 rounded-lg text-sm font-semibold"
-                      style={{ background: COLOR.gold, color: '#fff' }}>
-                데이터 가져오기로 이동
-              </button>
+              <div className="text-xl font-bold mb-2" style={{ color: COLOR.text }}>접근 권한 없음</div>
+              <div className="text-sm mb-6" style={{ color: COLOR.textDim, lineHeight: 1.8, maxWidth: 480, margin: '0 auto 24px' }}>
+                자금관리 데이터에 접근할 권한이 없습니다.<br />
+                Google Drive에 로그인은 성공했지만 자금관리 시트가 공유되지 않았습니다.<br /><br />
+                <b style={{ color: COLOR.warn }}>관리자에게 다음 시트 공유를 요청해주세요:</b>
+              </div>
+              <div className="inline-block text-left text-[12px] px-5 py-3 rounded-lg" style={{ background: COLOR.surfaceEl, border: `1px solid ${COLOR.border}`, fontFamily: 'var(--mono)', color: COLOR.text }}>
+                ▸ 마스터_계좌 (Master_Accounts)<br />
+                ▸ 마스터_계좌입출금실적 (Master_Actuals)<br />
+                ▸ 마스터_자금계획 (Master_Plans)
+              </div>
+              <div className="text-[11px] mt-5" style={{ color: COLOR.textMute }}>
+                관리자라면 우측 상단 "🔒 관리자 전환" 버튼을 통해 설정을 변경할 수 있습니다
+              </div>
             </Card>
           )}
 
-          {hasData && tab === 'dashboard'    && <DashboardView    metrics={metrics} planTypeChoice={planTypeChoice} setPlanTypeChoice={setPlanTypeChoice} planYearFilter={planYearFilter} setPlanYearFilter={setPlanYearFilter} actualizedMonths={effectiveActualizedMonths} setActualizedMonths={setActualizedMonths} teamSettings={teamSettings} userClosingMonthOverride={userClosingMonthOverride} setUserClosingMonthOverride={setUserClosingMonthOverride} effectiveClosingMonth={effectiveClosingMonth} data={data} />}
-          {hasData && tab === 'accounts'     && <AccountsView     metrics={metrics} />}
-          {hasData && tab === 'transactions' && <TransactionsView metrics={metrics} />}
-          {hasData && tab === 'plans'        && <PlansView        metrics={metrics} />}
-          {hasData && tab === 'loans'        && <LoansView        loans={loans} entityFilter={entityFilter} />}
-          {hasData && tab === 'categories'   && <CategoryAnalysisView metrics={metrics} />}
-          {tab === 'import'                  && <ImportView
+          {!accessDenied && !hasData && tab !== 'import' && (
+            <Card className="p-12 text-center">
+              <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: `${COLOR.gold}18`, color: COLOR.gold }}>
+                <Cloud size={28} />
+              </div>
+              <div className="text-lg font-semibold mb-2" style={{ color: COLOR.text }}>데이터가 없습니다</div>
+              <div className="text-sm mb-6" style={{ color: COLOR.textDim, lineHeight: 1.7 }}>
+                {adminMode
+                  ? <>먼저 "데이터 가져오기" 탭에서 CSV 파일을 업로드하거나 Drive에 연결하세요.</>
+                  : <>Google Drive에 연결하면 데이터가 자동으로 로드됩니다.<br/>이 시트에 접근 권한이 없다면 관리자에게 시트 공유를 요청하세요.</>
+                }
+              </div>
+              {adminMode && (
+                <button onClick={() => setTab('import')} className="px-5 py-2.5 rounded-lg text-sm font-semibold"
+                        style={{ background: COLOR.gold, color: '#fff' }}>
+                  데이터 가져오기로 이동
+                </button>
+              )}
+            </Card>
+          )}
+
+          {/* 일반 사용자가 import 탭에 접근하려 할 때 */}
+          {tab === 'import' && !adminMode && (
+            <Card className="p-12 text-center">
+              <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: `${COLOR.warn}18`, color: COLOR.warn }}>
+                <Lock size={28} />
+              </div>
+              <div className="text-lg font-semibold mb-2" style={{ color: COLOR.text }}>관리자 전용 화면입니다</div>
+              <div className="text-sm" style={{ color: COLOR.textDim, lineHeight: 1.7 }}>
+                데이터 가져오기는 관리자만 접근 가능합니다.<br/>
+                일반 사용자는 Drive 연결을 통해 시트가 자동 동기화됩니다.
+              </div>
+            </Card>
+          )}
+
+          {!accessDenied && hasData && tab === 'dashboard'    && <DashboardView    metrics={metrics} planTypeChoice={planTypeChoice} setPlanTypeChoice={setPlanTypeChoice} planYearFilter={planYearFilter} setPlanYearFilter={setPlanYearFilter} actualizedMonths={effectiveActualizedMonths} setActualizedMonths={setActualizedMonths} teamSettings={teamSettings} userClosingMonthOverride={userClosingMonthOverride} setUserClosingMonthOverride={setUserClosingMonthOverride} effectiveClosingMonth={effectiveClosingMonth} data={data} />}
+          {!accessDenied && hasData && tab === 'accounts'     && <AccountsView     metrics={metrics} />}
+          {!accessDenied && hasData && tab === 'transactions' && <TransactionsView metrics={metrics} />}
+          {!accessDenied && hasData && tab === 'plans'        && <PlansView        metrics={metrics} />}
+          {!accessDenied && hasData && tab === 'loans'        && <LoansView        loans={loans} entityFilter={entityFilter} />}
+          {!accessDenied && hasData && tab === 'categories'   && <CategoryAnalysisView metrics={metrics} />}
+          {tab === 'import' && adminMode && <ImportView
             data={data} setData={setData} onReset={resetAll}
             driveSettings={driveSettings} setDriveSettings={setDriveSettings}
             accessToken={accessToken} setAccessToken={setAccessToken}
