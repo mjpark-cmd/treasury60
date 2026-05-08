@@ -689,8 +689,8 @@ const STORAGE_KEYS = {
   lastSync: 'finance-pnl:v1:lastSync'
 };
 const DEFAULT_DRIVE = {
-  clientId: '',
-  spreadsheetUrl: '',
+  clientId: '482993916329-t1ias6cie4mg77i18ivqrks8p72ohksb.apps.googleusercontent.com',
+  spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/1ygBKKo-OTc1foMMcAdivlgIiYBV2xrdag8U_olbtteo/edit',
   tabs: {
     annual: 'Master_재무제표(연간)',
     monthly: 'Master_재무제표(월간)',
@@ -699,6 +699,8 @@ const DEFAULT_DRIVE = {
     orders: 'Master_수주'
   }
 };
+const ADMIN_PASSWORD = '60hz2026'; // 관리자 비밀번호
+
 function extractSpreadsheetId(urlOrId) {
   if (!urlOrId) return null;
   const s = urlOrId.trim();
@@ -994,6 +996,121 @@ function parseOrdersMatrix(matrix) {
 }
 function parseOrders(text) {
   return parseOrdersMatrix(parseCsvMatrix(text));
+}
+
+/* ══════════ Master_배부설정 ══════════
+ * 컬럼: 계정과목 | xEMS | Gridflex | ER | 굿뉴스에너지 | 패리티빌더즈 (Y/N)
+ * + 선택: 비고
+ * 첫 행 = 헤더
+ */
+const ALLOC_TARGETS = ["xEMS", "Gridflex", "ER", "굿뉴스에너지", "패리티빌더즈"];
+function parseAllocConfigMatrix(matrix) {
+  if (!matrix.length) return [];
+  // 헤더 행 — '계정과목' 또는 '계정' 포함된 행
+  let hrow = -1;
+  for (let i = 0; i < Math.min(matrix.length, 5); i++) {
+    const cells = (matrix[i] || []).map(v => String(v || "").trim());
+    if (cells.some(c => c === "계정과목" || c === "계정")) {
+      hrow = i;
+      break;
+    }
+  }
+  if (hrow < 0) return [];
+  const headers = matrix[hrow].map(v => String(v || "").trim());
+  const colIdx = {};
+  headers.forEach((h, i) => {
+    colIdx[h] = i;
+  });
+  const accountCol = colIdx["계정과목"] != null ? colIdx["계정과목"] : colIdx["계정"];
+  if (accountCol == null) return [];
+  const targetCols = {};
+  ALLOC_TARGETS.forEach(t => {
+    if (colIdx[t] != null) targetCols[t] = colIdx[t];
+  });
+  const rows = [];
+  for (let i = hrow + 1; i < matrix.length; i++) {
+    const r = matrix[i] || [];
+    const account = String(r[accountCol] || "").trim();
+    if (!account) continue;
+    const targets = [];
+    ALLOC_TARGETS.forEach(t => {
+      const colI = targetCols[t];
+      if (colI == null) return;
+      const v = String(r[colI] || "").trim().toUpperCase();
+      if (v === "Y" || v === "YES" || v === "TRUE" || v === "1" || v === "O") {
+        targets.push(t);
+      }
+    });
+    rows.push({
+      계정과목: account,
+      targets,
+      _raw: r
+    });
+  }
+  return rows;
+}
+function parseAllocConfig(text) {
+  return parseAllocConfigMatrix(parseCsvMatrix(text));
+}
+
+/* ══════════ Master_인원현황 ══════════
+ * 컬럼: 단위 | 시작월 | 종료월 | 인원 (선택: 비고)
+ * 시작월 = 'YYYY-MM' (또는 변형) · 종료월 빈 값 = 현재까지
+ */
+function parseHeadcountMatrix(matrix) {
+  if (!matrix.length) return [];
+  let hrow = -1;
+  for (let i = 0; i < Math.min(matrix.length, 5); i++) {
+    const cells = (matrix[i] || []).map(v => String(v || "").trim());
+    if (cells.includes("단위") && cells.includes("인원")) {
+      hrow = i;
+      break;
+    }
+  }
+  if (hrow < 0) return [];
+  const headers = matrix[hrow].map(v => String(v || "").trim());
+  const colIdx = {};
+  headers.forEach((h, i) => {
+    colIdx[h] = i;
+  });
+  const unitCol = colIdx["단위"];
+  const startCol = colIdx["시작월"];
+  const endCol = colIdx["종료월"];
+  const cntCol = colIdx["인원"];
+  if (unitCol == null || cntCol == null) return [];
+  const rows = [];
+  for (let i = hrow + 1; i < matrix.length; i++) {
+    const r = matrix[i] || [];
+    const unit = String(r[unitCol] || "").trim();
+    if (!unit) continue;
+    const cnt = parseFloat(String(r[cntCol] || "").replace(/,/g, ""));
+    if (isNaN(cnt)) continue;
+    rows.push({
+      단위: unit,
+      시작월: toMonthKey(r[startCol]) || "",
+      종료월: endCol != null ? toMonthKey(r[endCol]) || "" : "",
+      인원: cnt
+    });
+  }
+  return rows;
+}
+function parseHeadcount(text) {
+  return parseHeadcountMatrix(parseCsvMatrix(text));
+}
+
+/* 특정 월의 단위별 인원 룩업 (시기별 변동 처리) */
+function getHeadcountAt(headcountRows, unit, month) {
+  if (!month) return 0;
+  const matches = headcountRows.filter(r => {
+    if (r.단위 !== unit) return false;
+    if (r.시작월 && month < r.시작월) return false;
+    if (r.종료월 && month > r.종료월) return false;
+    return true;
+  });
+  if (matches.length === 0) return 0;
+  // 가장 최근 시작월
+  matches.sort((a, b) => (b.시작월 || "").localeCompare(a.시작월 || ""));
+  return matches[0].인원;
 }
 
 /* ══════════ 집계 ══════════ */
@@ -1580,10 +1697,41 @@ function App() {
   const [sales, setSales] = useState([]);
   const [managerial, setManagerial] = useState([]); // Master_관리손익
   const [orders, setOrders] = useState([]); // Master_수주
+  const [allocConfig, setAllocConfig] = useState([]); // Master_배부설정
+  const [headcount, setHeadcount] = useState([]); // Master_인원현황
   const [tab, setTab] = useState("import");
   const [year, setYear] = useState(null);
   const [entity, setEntity] = useState(CONSOLIDATED);
   const [entityOpen, setEntityOpen] = useState(false);
+  // 관리자 모드 — URL ?admin=1 또는 콘솔에서 unlockAdmin()
+  const [adminMode, setAdminMode] = useState(() => {
+    try {
+      if (typeof window !== "undefined") {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("admin") === "1") return true;
+        if (window.localStorage && window.localStorage.getItem("finance-pnl:v1:adminMode") === "1") return true;
+      }
+    } catch (e) {}
+    return false;
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.unlockAdmin = () => {
+        try {
+          window.localStorage.setItem("finance-pnl:v1:adminMode", "1");
+        } catch (e) {}
+        setAdminMode(true);
+        console.log("✅ Admin mode 활성화됨.");
+      };
+      window.lockAdmin = () => {
+        try {
+          window.localStorage.removeItem("finance-pnl:v1:adminMode");
+        } catch (e) {}
+        setAdminMode(false);
+        console.log("🔒 Admin mode 해제됨.");
+      };
+    }
+  }, []);
 
   // ─── Google Drive / OAuth ───
   const [driveSettings, setDriveSettings] = useState(DEFAULT_DRIVE);
@@ -1662,26 +1810,63 @@ function App() {
     setSyncing(true);
     setSyncErr(null);
     try {
-      const [annualVals, monthlyVals, salesVals, managerialVals, ordersVals] = await Promise.all([fetchSheetArray(ssid, settings.tabs.annual, token).catch(() => []), fetchSheetArray(ssid, settings.tabs.monthly, token).catch(() => []), fetchSheetArray(ssid, settings.tabs.sales, token).catch(() => []), fetchSheetArray(ssid, settings.tabs.managerial, token).catch(() => []), fetchSheetArray(ssid, settings.tabs.orders, token).catch(() => [])]);
+      // 각 시트별 결과 + 에러 분리 추적 (403 권한 거부 등 안내용)
+      const fetchOrError = async (label, sheetName) => {
+        try {
+          const v = await fetchSheetArray(ssid, sheetName, token);
+          return {
+            label,
+            sheetName,
+            values: v,
+            error: null
+          };
+        } catch (e) {
+          const msg = String(e.message || e);
+          let kind = "unknown";
+          if (/403|Permission|denied/i.test(msg)) kind = "permission";else if (/404|not found|cannot.*find/i.test(msg)) kind = "notFound";else if (/401|invalid|expired/i.test(msg)) kind = "auth";
+          return {
+            label,
+            sheetName,
+            values: [],
+            error: {
+              kind,
+              msg
+            }
+          };
+        }
+      };
+      const results = await Promise.all([fetchOrError("재무제표(연간)", settings.tabs.annual), fetchOrError("재무제표(월간)", settings.tabs.monthly), fetchOrError("매출", settings.tabs.sales), fetchOrError("관리손익", settings.tabs.managerial), fetchOrError("수주", settings.tabs.orders)]);
+      const [annualR, monthlyR, salesR, managerialR, ordersR] = results;
       // 연간/월간 통합
-      const annualRecs = parseFinancialMatrix(annualVals).map(r => ({
+      const annualRecs = parseFinancialMatrix(annualR.values).map(r => ({
         ...r,
         periodType: "annual",
         monthKey: ""
       }));
-      const monthlyRecsRaw = parseFinancialMatrix(monthlyVals);
+      const monthlyRecsRaw = parseFinancialMatrix(monthlyR.values);
       const monthlyRecs = monthlyRecsRaw.filter(r => r.monthKey).map(r => ({
         ...r,
         periodType: "monthly"
       }));
       const allFinancial = [...annualRecs, ...monthlyRecs];
-      const salesRecs = parseSalesMatrix(salesVals);
-      const managerialRecs = parseManagerialMatrix(managerialVals);
-      const ordersRecs = parseOrdersMatrix(ordersVals);
+      const salesRecs = parseSalesMatrix(salesR.values);
+      const managerialRecs = parseManagerialMatrix(managerialR.values);
+      const ordersRecs = parseOrdersMatrix(ordersR.values);
       setFinancial(allFinancial);
       setSales(salesRecs);
       setManagerial(managerialRecs);
       setOrders(ordersRecs);
+
+      // 권한 거부된 시트 / 못 찾은 시트 안내
+      const permDenied = results.filter(r => r.error && r.error.kind === "permission");
+      const notFound = results.filter(r => r.error && r.error.kind === "notFound");
+      if (permDenied.length > 0) {
+        const sheetList = permDenied.map(r => `${r.label} (${r.sheetName})`).join(", ");
+        setSyncErr(`다음 시트에 접근 권한이 없습니다 — 관리자에게 공유 요청하세요: ${sheetList}`);
+      } else if (notFound.length > 0 && results.every(r => !r.error || r.error.kind !== "permission")) {
+        const sheetList = notFound.map(r => r.sheetName).join(", ");
+        setSyncErr(`시트를 찾을 수 없습니다: ${sheetList}`);
+      }
       const now = new Date().toISOString();
       try {
         localStorage.setItem(STORAGE_KEYS.lastSync, now);
@@ -1819,6 +2004,25 @@ function App() {
           const dropCount = parsed.filter(r => r.drop).length;
           alert(`Master_수주 ${parsed.length}건 업로드 완료\n• 법인: ${entities.join(", ")}\n• 변동 발생: ${변동건수}건 · 미선정/드랍: ${dropCount}건`);
           setOrders(parsed);
+        } else if (kind === "allocConfig") {
+          const parsed = parseAllocConfig(text);
+          if (parsed.length === 0) {
+            alert("Master_배부설정 파일에서 데이터를 찾지 못했습니다.\n헤더에 '계정과목' 그리고 'xEMS', 'Gridflex', 'ER', '굿뉴스에너지', '패리티빌더즈' 컬럼이 있어야 합니다.");
+            return;
+          }
+          const accountSummary = parsed.length;
+          const targetCount = parsed.reduce((s, r) => s + r.targets.length, 0);
+          alert(`Master_배부설정 업로드 완료\n• 계정 ${accountSummary}건 · 총 매핑 ${targetCount}건`);
+          setAllocConfig(parsed);
+        } else if (kind === "headcount") {
+          const parsed = parseHeadcount(text);
+          if (parsed.length === 0) {
+            alert("Master_인원현황 파일에서 데이터를 찾지 못했습니다.\n헤더에 '단위', '시작월', '종료월', '인원'이 있어야 합니다.");
+            return;
+          }
+          const units = [...new Set(parsed.map(r => r.단위))];
+          alert(`Master_인원현황 ${parsed.length}건 업로드 완료\n• 단위: ${units.join(", ")}`);
+          setHeadcount(parsed);
         }
       } catch (err) {
         alert("파싱 실패: " + err.message);
@@ -1878,9 +2082,45 @@ function App() {
       color: COLOR.textMute,
       letterSpacing: "0.1em"
     }
-  }, "\uADF8\uB8F9 \uD1B5\uD569 \uC7AC\uBB34\uAD00\uB9AC \xB7 ", STANDARD_ENTITIES.length, "\uAC1C \uBC95\uC778", hasData ? ` · 재무 ${financial.length} · 매출 ${sales.length}` : ""))), hasData && /*#__PURE__*/React.createElement("div", {
+  }, "\uADF8\uB8F9 \uD1B5\uD569 \uC7AC\uBB34\uAD00\uB9AC \xB7 ", STANDARD_ENTITIES.length, "\uAC1C \uBC95\uC778", hasData ? ` · 재무 ${financial.length} · 매출 ${sales.length}` : ""))), /*#__PURE__*/React.createElement("div", {
     className: "flex items-center gap-3 flex-wrap"
-  }, /*#__PURE__*/React.createElement("div", {
+  }, adminMode ? /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      if (confirm("관리자 모드를 해제하시겠습니까?")) {
+        try {
+          localStorage.removeItem("finance-pnl:v1:adminMode");
+        } catch (e) {}
+        setAdminMode(false);
+      }
+    },
+    className: "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px]",
+    style: {
+      background: `${COLOR.warn}14`,
+      color: COLOR.warn,
+      border: `1px solid ${COLOR.warn}40`,
+      cursor: "pointer"
+    }
+  }, "\uD83D\uDD13 \uAD00\uB9AC\uC790 \uBAA8\uB4DC (\uD574\uC81C)") : /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      const pw = prompt("관리자 비밀번호를 입력하세요:");
+      if (pw === null) return;
+      if (pw === ADMIN_PASSWORD) {
+        try {
+          localStorage.setItem("finance-pnl:v1:adminMode", "1");
+        } catch (e) {}
+        setAdminMode(true);
+      } else if (pw !== "") {
+        alert("비밀번호가 일치하지 않습니다.");
+      }
+    },
+    className: "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px]",
+    style: {
+      background: COLOR.surface,
+      color: COLOR.textDim,
+      border: `1px solid ${COLOR.border}`,
+      cursor: "pointer"
+    }
+  }, "\uD83D\uDD12 \uAD00\uB9AC\uC790 \uC804\uD658"), hasData && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "flex items-center gap-2 px-3 py-2 rounded-lg",
     style: {
       background: COLOR.surface,
@@ -1962,7 +2202,7 @@ function App() {
       cursor: "pointer",
       border: "none"
     }
-  }, e)))))), hasData && /*#__PURE__*/React.createElement(DataScopeBanner, {
+  }, e))))))), hasData && /*#__PURE__*/React.createElement(DataScopeBanner, {
     financial: financial,
     sales: sales,
     managerial: managerial,
@@ -2036,7 +2276,12 @@ function App() {
     entity: entity
   }), tab === "pnl" && /*#__PURE__*/React.createElement(PnlView, {
     managerial: managerial,
-    year: year
+    year: year,
+    allocConfig: allocConfig,
+    headcount: headcount,
+    sales: sales,
+    setAllocConfig: setAllocConfig,
+    setHeadcount: setHeadcount
   }), tab === "orders" && /*#__PURE__*/React.createElement(OrdersView, {
     orders: orders,
     managerial: managerial
@@ -2046,11 +2291,15 @@ function App() {
     sales: sales,
     managerial: managerial,
     orders: orders,
+    allocConfig: allocConfig,
+    headcount: headcount,
     onReset: () => {
       setFinancial([]);
       setSales([]);
       setManagerial([]);
       setOrders([]);
+      setAllocConfig([]);
+      setHeadcount([]);
       setYear(null);
     },
     driveSettings: driveSettings,
@@ -2061,6 +2310,7 @@ function App() {
     syncErr: syncErr,
     lastSync: lastSync,
     autoConnecting: autoConnecting,
+    adminMode: adminMode,
     onSync: triggerSync
   })), /*#__PURE__*/React.createElement("div", {
     className: "text-[10px] text-center mt-8",
@@ -8135,7 +8385,12 @@ function YnDot({
 /* ══════════ 손익분석 (관리회계) — Master_관리손익 기반 ══════════ */
 function PnlView({
   managerial,
-  year
+  year,
+  allocConfig,
+  headcount,
+  sales,
+  setAllocConfig,
+  setHeadcount
 }) {
   const [subTab, setSubTab] = useState("overview");
 
@@ -8455,7 +8710,10 @@ function PnlView({
     active: subTab === "project",
     onClick: () => setSubTab("project"),
     disabled: !hasProj
-  }, "\uD83D\uDCC1 \uD504\uB85C\uC81D\uD2B8\uBCC4 P&L")), subTab === "overview" && /*#__PURE__*/React.createElement(PnlOverview, {
+  }, "\uD83D\uDCC1 \uD504\uB85C\uC81D\uD2B8\uBCC4 P&L"), /*#__PURE__*/React.createElement(SubTab, {
+    active: subTab === "allocation",
+    onClick: () => setSubTab("allocation")
+  }, "\uD83E\uDE99 \uACF5\uD1B5\uBE44 \uBC30\uBD80\uC190\uC775")), subTab === "overview" && /*#__PURE__*/React.createElement(PnlOverview, {
     baseFiltered: baseFiltered,
     detailFiltered: detailFiltered,
     entityLabel: globalEntity,
@@ -8474,6 +8732,14 @@ function PnlView({
     filtered: baseFiltered,
     dim: "\uD504\uB85C\uC81D\uD2B8",
     entityLabel: globalEntity,
+    periodLabel: `${monthFrom}~${monthTo}`
+  }), subTab === "allocation" && /*#__PURE__*/React.createElement(PnlAllocationView, {
+    managerial: managerial,
+    baseFiltered: baseFiltered,
+    allocConfig: allocConfig,
+    headcount: headcount,
+    monthFrom: monthFrom,
+    monthTo: monthTo,
     periodLabel: `${monthFrom}~${monthTo}`
   }));
 }
@@ -8499,6 +8765,698 @@ function SubTab({
     }
   }, children);
 }
+
+/* ════════════════ 공통비 배부손익 ════════════════
+ * 식스티헤르츠의 공통비를 5개 단위(xEMS/Gridflex/ER/굿뉴스에너지/패리티빌더즈)에 배부
+ * 배부 키: 인원수 (Master_배부설정의 Y/N + Master_인원현황 인원)
+ *
+ * 단위별 손익 = 직접 매출 + 직접 원가/비용 − 배부받은 공통비
+ * - 직접 매출/원가/비용: 식스티는 부서 매핑, 굿뉴스/패리티는 법인 직접
+ * - 공통비: 식스티 데이터 중 부서 미배정(또는 '공통') 으로 판단되는 것
+ *   ※ allocConfig 시트에 그 계정이 등록되어 있으면 → 표시된 단위로만 배부
+ *   ※ 등록 안 된 계정 → 공통비로 안 봄 (각 부서 직접비용으로 남음)
+ */
+function PnlAllocationView({
+  managerial,
+  baseFiltered,
+  allocConfig,
+  headcount,
+  monthFrom,
+  monthTo,
+  periodLabel
+}) {
+  // 단위 매핑: 식스티 부서명 → 단위명
+  const SIXTY_DEPTS = ["xEMS", "Gridflex", "ER"];
+  const ALL_UNITS = ["xEMS", "Gridflex", "ER", "굿뉴스에너지", "패리티빌더즈"];
+
+  // 식스티 부서 식별 (부서/담당부서/소속 컬럼에서)
+  const sixtyDeptOf = r => {
+    const dept = String(r.부서 || "").trim();
+    // xEMS, GF(=Gridflex), ER 처리
+    if (/xEMS/i.test(dept)) return "xEMS";
+    if (/^GF$|Gridflex/i.test(dept)) return "Gridflex";
+    if (/^ER$/i.test(dept)) return "ER";
+    return null;
+  };
+
+  // 단위 결정
+  const unitOf = r => {
+    if (r.entity === "식스티헤르츠") return sixtyDeptOf(r);
+    if (r.entity === "굿뉴스에너지") return "굿뉴스에너지";
+    if (r.entity === "패리티빌더즈") return "패리티빌더즈";
+    return null;
+  };
+
+  // 1) baseFiltered에서 단위 매핑 + 공통비 분류
+  const [allocResult, summary] = useMemo(() => {
+    if (!managerial || managerial.length === 0) {
+      return [null, {
+        매출: 0,
+        원가: 0,
+        판관비: 0,
+        공통비: 0,
+        인건비: 0
+      }];
+    }
+
+    // 배부설정: 계정 → 적용 단위 배열
+    const allocMap = {};
+    (allocConfig || []).forEach(c => {
+      allocMap[c.계정과목] = c.targets || [];
+    });
+
+    // 단위별 직접 손익 + 공통비 합계 + 공통비 배부 결과
+    const direct = {};
+    ALL_UNITS.forEach(u => {
+      direct[u] = {
+        매출: 0,
+        원가: 0,
+        판관비: 0,
+        인건비: 0,
+        영업외수익: 0,
+        영업외비용: 0,
+        배부받은공통비: 0
+      };
+    });
+    const commonByAccount = {}; // 계정별 공통비 (배부 대상)
+    let unmappedSum = 0; // 단위 매핑 안 된 식스티 데이터
+
+    baseFiltered.forEach(r => {
+      const unit = unitOf(r);
+      // 카테고리: r.구분 = 매출/원가/판관비/영업외수익/영업외비용
+      const cat = r.구분 || "";
+      if (unit) {
+        // 직접 귀속
+        if (cat === "매출") direct[unit].매출 += r.amount;else if (cat === "원가") direct[unit].원가 += r.amount;else if (cat === "판관비") {
+          direct[unit].판관비 += r.amount;
+          // 인건비 별도 집계 (분류항목에 '인건비' 포함)
+          if ((r.분류항목 || "").includes("인건비")) direct[unit].인건비 += r.amount;
+        } else if (cat === "영업외수익") direct[unit].영업외수익 += r.amount;else if (cat === "영업외비용") direct[unit].영업외비용 += r.amount;
+      } else if (r.entity === "식스티헤르츠") {
+        // 식스티인데 단위 매핑 안 됨 → 공통비 후보
+        // allocConfig에 등록된 계정만 공통비로 처리, 나머지는 unmappedSum에 누적 (안내용)
+        const account = r.계정과목 || "";
+        if (allocMap[account] && allocMap[account].length > 0) {
+          if (!commonByAccount[account]) commonByAccount[account] = {
+            계정과목: account,
+            금액: 0,
+            targets: allocMap[account]
+          };
+          commonByAccount[account].금액 += r.amount;
+        } else {
+          unmappedSum += r.amount;
+        }
+      }
+    });
+
+    // 2) 공통비를 인원수 비례로 배부
+    const allocDetail = []; // 배부 명세 표용
+    const midMonth = monthTo || monthFrom || "";
+    Object.values(commonByAccount).forEach(item => {
+      const targets = item.targets;
+      const weights = targets.map(t => getHeadcountAt(headcount, t, midMonth));
+      const totalW = weights.reduce((s, w) => s + w, 0);
+      if (totalW === 0) {
+        // 인원수가 모두 0이면 균등 배부
+        const each = item.금액 / targets.length;
+        targets.forEach((t, i) => {
+          direct[t].배부받은공통비 += each;
+          allocDetail.push({
+            계정과목: item.계정과목,
+            단위: t,
+            가중치: 0,
+            비율: 1 / targets.length,
+            금액: each,
+            총공통비: item.금액
+          });
+        });
+      } else {
+        targets.forEach((t, i) => {
+          const ratio = weights[i] / totalW;
+          const amt = item.금액 * ratio;
+          direct[t].배부받은공통비 += amt;
+          allocDetail.push({
+            계정과목: item.계정과목,
+            단위: t,
+            가중치: weights[i],
+            비율: ratio,
+            금액: amt,
+            총공통비: item.금액
+          });
+        });
+      }
+    });
+
+    // 3) 단위별 최종 손익 계산
+    const units = ALL_UNITS.map(u => {
+      const d = direct[u];
+      const 영업이익전 = d.매출 - d.원가 - d.판관비; // 배부 전 영업이익
+      const 영업이익후 = 영업이익전 - d.배부받은공통비;
+      return {
+        단위: u,
+        매출: d.매출,
+        원가: d.원가,
+        판관비: d.판관비,
+        인건비: d.인건비,
+        영업이익전,
+        배부받은공통비: d.배부받은공통비,
+        영업이익후,
+        영업외수익: d.영업외수익,
+        영업외비용: d.영업외비용,
+        세전이익: 영업이익후 + d.영업외수익 - d.영업외비용,
+        인원: getHeadcountAt(headcount, u, midMonth)
+      };
+    });
+
+    // 합계
+    const totalCommon = Object.values(commonByAccount).reduce((s, c) => s + c.금액, 0);
+    const totals = {
+      매출: units.reduce((s, u) => s + u.매출, 0),
+      원가: units.reduce((s, u) => s + u.원가, 0),
+      판관비: units.reduce((s, u) => s + u.판관비, 0),
+      공통비: totalCommon,
+      인건비: units.reduce((s, u) => s + u.인건비, 0),
+      미매핑식스티: unmappedSum,
+      영업외수익: units.reduce((s, u) => s + u.영업외수익, 0),
+      영업외비용: units.reduce((s, u) => s + u.영업외비용, 0)
+    };
+    return [{
+      units,
+      allocDetail,
+      commonByAccount: Object.values(commonByAccount)
+    }, totals];
+  }, [managerial, baseFiltered, allocConfig, headcount, monthFrom, monthTo]);
+  const hasConfig = allocConfig && allocConfig.length > 0;
+  const hasHC = headcount && headcount.length > 0;
+  if (!managerial || managerial.length === 0) {
+    return /*#__PURE__*/React.createElement(Card, {
+      className: "p-8 text-center"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "text-2xl mb-2"
+    }, "\uD83E\uDE99"), /*#__PURE__*/React.createElement("div", {
+      className: "text-sm",
+      style: {
+        color: COLOR.textDim
+      }
+    }, "Master_\uAD00\uB9AC\uC190\uC775 \uB370\uC774\uD130\uB97C \uBA3C\uC800 \uC5C5\uB85C\uB4DC\uD574 \uC8FC\uC138\uC694"));
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    className: "space-y-4"
+  }, (!hasConfig || !hasHC) && /*#__PURE__*/React.createElement(Card, {
+    className: "p-5",
+    style: {
+      background: `${COLOR.warn}06`,
+      borderColor: `${COLOR.warn}40`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-sm font-semibold mb-2",
+    style: {
+      color: COLOR.warn
+    }
+  }, "\u26A0 \uBC30\uBD80 \uC124\uC815\uC774 \uD544\uC694\uD569\uB2C8\uB2E4"), /*#__PURE__*/React.createElement("div", {
+    className: "text-[12px] space-y-2",
+    style: {
+      color: COLOR.textDim,
+      lineHeight: 1.7
+    }
+  }, !hasConfig && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "1. Master_\uBC30\uBD80\uC124\uC815"), " \uC2DC\uD2B8\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4 \u2014 \uCEEC\uB7FC: ", /*#__PURE__*/React.createElement("code", {
+    style: codeStyle
+  }, "\uACC4\uC815\uACFC\uBAA9 | xEMS | Gridflex | ER | \uAD7F\uB274\uC2A4\uC5D0\uB108\uC9C0 | \uD328\uB9AC\uD2F0\uBE4C\uB354\uC988 | (\uBE44\uACE0)"), /*#__PURE__*/React.createElement("br", null), "\uAC01 \uB2E8\uC704 \uCEEC\uB7FC\uC5D0 ", /*#__PURE__*/React.createElement("b", null, "Y"), "/", /*#__PURE__*/React.createElement("b", null, "N"), " \uC785\uB825 (Y = \uADF8 \uB2E8\uC704\uC5D0 \uBC30\uBD80)"), !hasHC && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "2. Master_\uC778\uC6D0\uD604\uD669"), " \uC2DC\uD2B8\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4 \u2014 \uCEEC\uB7FC: ", /*#__PURE__*/React.createElement("code", {
+    style: codeStyle
+  }, "\uB2E8\uC704 | \uC2DC\uC791\uC6D4 | \uC885\uB8CC\uC6D4 | \uC778\uC6D0 | (\uBE44\uACE0)"), /*#__PURE__*/React.createElement("br", null), "\uB2E8\uC704 = xEMS / Gridflex / ER / \uAD7F\uB274\uC2A4\uC5D0\uB108\uC9C0 / \uD328\uB9AC\uD2F0\uBE4C\uB354\uC988", /*#__PURE__*/React.createElement("br", null), "\uC885\uB8CC\uC6D4 \uBE44\uC6CC\uB450\uBA74 \uD604\uC7AC\uAE4C\uC9C0 \uC801\uC6A9"), /*#__PURE__*/React.createElement("div", {
+    className: "mt-2 pt-2",
+    style: {
+      borderTop: `1px dashed ${COLOR.warn}40`,
+      color: COLOR.textMute
+    }
+  }, "\u25B8 \uB370\uC774\uD130 \uAC00\uC838\uC624\uAE30 \uD0ED\uC5D0\uC11C CSV \uC5C5\uB85C\uB4DC \uB610\uB294 Google Sheets\uC5D0\uC11C \uB3D9\uAE30\uD654 \uAC00\uB2A5"))), /*#__PURE__*/React.createElement(Card, {
+    className: "p-5",
+    style: {
+      background: `linear-gradient(135deg, ${COLOR.gold}08, ${COLOR.purple}06)`,
+      borderColor: `${COLOR.gold}30`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center justify-between flex-wrap gap-3 mb-3"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px] uppercase tracking-wider font-bold",
+    style: {
+      color: COLOR.gold,
+      letterSpacing: "0.18em"
+    }
+  }, "\uD83E\uDE99 \uACF5\uD1B5\uBE44 \uBC30\uBD80\uC190\uC775"), /*#__PURE__*/React.createElement("div", {
+    className: "text-[12px] mt-1",
+    style: {
+      color: COLOR.textDim,
+      lineHeight: 1.5
+    }
+  }, "\uC2DD\uC2A4\uD2F0\uD5E4\uB974\uCE20 \uACF5\uD1B5\uBE44 \u2192 5\uAC1C \uB2E8\uC704\uC5D0 \uC778\uC6D0\uC218 \uBE44\uB840 \uBC30\uBD80 \xB7 \uBC30\uBD80 \uD6C4 \uB2E8\uC704\uBCC4 \uC9C4\uC9DC \uC190\uC775")), /*#__PURE__*/React.createElement("div", {
+    className: "text-right"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute
+    }
+  }, periodLabel), /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute,
+      marginTop: 2
+    }
+  }, "\uC778\uC6D0: ", ALL_UNITS.map(u => `${u} ${getHeadcountAt(headcount, u, monthTo) || 0}`).join(" · ")))), /*#__PURE__*/React.createElement("div", {
+    className: "grid grid-cols-2 md:grid-cols-4 gap-3 mt-4"
+  }, /*#__PURE__*/React.createElement(Card, {
+    className: "p-3",
+    style: {
+      background: `${COLOR.gold}10`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute,
+      letterSpacing: "0.1em"
+    }
+  }, "\uCD1D \uB9E4\uCD9C"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontFamily: MONO,
+      fontWeight: 700,
+      color: COLOR.text,
+      marginTop: 4
+    }
+  }, fmtKRW(summary.매출)), /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute,
+      marginTop: 2
+    }
+  }, "5\uAC1C \uB2E8\uC704 \uC9C1\uC811")), /*#__PURE__*/React.createElement(Card, {
+    className: "p-3",
+    style: {
+      background: `${COLOR.danger}08`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute,
+      letterSpacing: "0.1em"
+    }
+  }, "\uC6D0\uAC00 + \uD310\uAD00\uBE44"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontFamily: MONO,
+      fontWeight: 700,
+      color: COLOR.text,
+      marginTop: 4
+    }
+  }, fmtKRW(summary.원가 + summary.판관비)), /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute,
+      marginTop: 2
+    }
+  }, "\uC9C1\uC811 \uADC0\uC18D\uBD84\uB9CC")), /*#__PURE__*/React.createElement(Card, {
+    className: "p-3",
+    style: {
+      background: `${COLOR.purple}10`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.purple,
+      letterSpacing: "0.1em"
+    }
+  }, "\uC2DD\uC2A4\uD2F0 \uACF5\uD1B5\uBE44"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontFamily: MONO,
+      fontWeight: 700,
+      color: COLOR.purple,
+      marginTop: 4
+    }
+  }, fmtKRW(summary.공통비)), /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute,
+      marginTop: 2
+    }
+  }, "\uBC30\uBD80 \uB300\uC0C1")), /*#__PURE__*/React.createElement(Card, {
+    className: "p-3",
+    style: {
+      background: `${COLOR.success}08`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.success,
+      letterSpacing: "0.1em"
+    }
+  }, "\uBC30\uBD80 \uD6C4 \uC601\uC5C5\uC774\uC775"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 18,
+      fontFamily: MONO,
+      fontWeight: 700,
+      color: COLOR.success,
+      marginTop: 4
+    }
+  }, fmtKRW(summary.매출 - summary.원가 - summary.판관비 - summary.공통비)), /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px]",
+    style: {
+      color: COLOR.textMute,
+      marginTop: 2
+    }
+  }, "5\uAC1C \uB2E8\uC704 \uD569"))), summary.미매핑식스티 !== 0 && /*#__PURE__*/React.createElement("div", {
+    className: "mt-3 pt-3 text-[11px]",
+    style: {
+      borderTop: `1px dashed ${COLOR.warn}40`,
+      color: COLOR.textDim
+    }
+  }, "\u26A0 \uC2DD\uC2A4\uD2F0 \uB370\uC774\uD130 \uC911 \uBD80\uC11C \uB9E4\uD551\uB3C4 \uC548 \uB418\uACE0 \uBC30\uBD80\uC124\uC815\uC5D0\uB3C4 \uC5C6\uB294 \uAE08\uC561: ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: COLOR.warn,
+      fontFamily: MONO
+    }
+  }, fmtKRW(summary.미매핑식스티)), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: COLOR.textMute,
+      marginLeft: 6
+    }
+  }, "\u2192 \uC5B4\uB514\uC5D0\uB3C4 \uBC18\uC601 \uC548 \uB428"))), allocResult && /*#__PURE__*/React.createElement(Card, {
+    className: "p-5"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-xs uppercase tracking-wider mb-3",
+    style: {
+      color: COLOR.textMute,
+      letterSpacing: "0.12em"
+    }
+  }, "\uB2E8\uC704\uBCC4 \uC190\uC775 \u2014 \uC9C1\uC811 + \uBC30\uBD80\uBC1B\uC740 \uACF5\uD1B5\uBE44"), /*#__PURE__*/React.createElement("div", {
+    className: "rounded-lg overflow-hidden",
+    style: {
+      border: `1px solid ${COLOR.border}`
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "w-full text-[12px]",
+    style: {
+      borderCollapse: "collapse"
+    }
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
+    style: {
+      background: COLOR.surfaceEl,
+      borderBottom: `1px solid ${COLOR.borderHi}`
+    }
+  }, /*#__PURE__*/React.createElement("th", {
+    style: thStyle
+  }, "\uB2E8\uC704"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "center"
+    }
+  }, "\uC778\uC6D0"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, "\uB9E4\uCD9C"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, "\uC6D0\uAC00"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, "\uD310\uAD00\uBE44"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, "\uBC30\uBD80 \uC804 OP"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right",
+      color: COLOR.purple
+    }
+  }, "\uBC30\uBD80\uBC1B\uC740 \uACF5\uD1B5\uBE44"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, "\uBC30\uBD80 \uD6C4 OP"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, "OP \uB9C8\uC9C4"))), /*#__PURE__*/React.createElement("tbody", null, allocResult.units.map((u, k) => /*#__PURE__*/React.createElement("tr", {
+    key: k,
+    style: {
+      borderBottom: `1px dashed ${COLOR.border}`
+    }
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      fontWeight: 500
+    }
+  }, u.단위), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "center",
+      fontFamily: MONO,
+      color: COLOR.textDim
+    }
+  }, u.인원), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO
+    }
+  }, Math.round(u.매출).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      color: COLOR.textDim
+    }
+  }, Math.round(u.원가).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      color: COLOR.textDim
+    }
+  }, Math.round(u.판관비).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      color: u.영업이익전 >= 0 ? COLOR.text : COLOR.danger
+    }
+  }, Math.round(u.영업이익전).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      color: COLOR.purple,
+      fontWeight: 500
+    }
+  }, "\u2212", Math.round(u.배부받은공통비).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      fontWeight: 700,
+      color: u.영업이익후 >= 0 ? COLOR.success : COLOR.danger
+    }
+  }, Math.round(u.영업이익후).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      color: u.영업이익후 >= 0 ? COLOR.success : COLOR.danger
+    }
+  }, u.매출 > 0 ? (u.영업이익후 / u.매출 * 100).toFixed(1) + "%" : "-")))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", {
+    style: {
+      background: `${COLOR.gold}10`,
+      borderTop: `2px solid ${COLOR.gold}50`
+    }
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      fontWeight: 700,
+      color: COLOR.gold
+    }
+  }, "\uD569\uACC4"), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "center",
+      fontFamily: MONO,
+      fontWeight: 700
+    }
+  }, allocResult.units.reduce((s, u) => s + u.인원, 0)), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      fontWeight: 700
+    }
+  }, Math.round(summary.매출).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      fontWeight: 700
+    }
+  }, Math.round(summary.원가).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      fontWeight: 700
+    }
+  }, Math.round(summary.판관비).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      fontWeight: 700
+    }
+  }, Math.round(summary.매출 - summary.원가 - summary.판관비).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      fontWeight: 700,
+      color: COLOR.purple
+    }
+  }, "\u2212", Math.round(summary.공통비).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      textAlign: "right",
+      fontFamily: MONO,
+      fontWeight: 700,
+      color: COLOR.success
+    }
+  }, Math.round(summary.매출 - summary.원가 - summary.판관비 - summary.공통비).toLocaleString()), /*#__PURE__*/React.createElement("td", {
+    style: tdStyle
+  })))))), allocResult && allocResult.allocDetail.length > 0 && /*#__PURE__*/React.createElement(Card, {
+    className: "p-5"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-xs uppercase tracking-wider mb-3",
+    style: {
+      color: COLOR.textMute,
+      letterSpacing: "0.12em"
+    }
+  }, "\uBC30\uBD80 \uBA85\uC138 \u2014 \uACC4\uC815\uBCC4 \u2192 \uB2E8\uC704\uBCC4 (\uAC80\uC99D\uC6A9)"), /*#__PURE__*/React.createElement("div", {
+    className: "rounded-lg overflow-hidden",
+    style: {
+      border: `1px solid ${COLOR.border}`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "overflow-auto",
+    style: {
+      maxHeight: 400
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "w-full text-[11px]",
+    style: {
+      borderCollapse: "collapse"
+    }
+  }, /*#__PURE__*/React.createElement("thead", {
+    style: {
+      position: "sticky",
+      top: 0,
+      background: COLOR.surfaceEl,
+      zIndex: 1
+    }
+  }, /*#__PURE__*/React.createElement("tr", {
+    style: {
+      borderBottom: `1px solid ${COLOR.borderHi}`
+    }
+  }, /*#__PURE__*/React.createElement("th", {
+    style: thStyle
+  }, "\uACC4\uC815\uACFC\uBAA9"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, "\uCD1D \uACF5\uD1B5\uBE44"), /*#__PURE__*/React.createElement("th", {
+    style: thStyle
+  }, "\u2192 \uB2E8\uC704"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "center"
+    }
+  }, "\uC778\uC6D0(\uAC00\uC911\uCE58)"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, "\uBE44\uC728"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...thStyle,
+      textAlign: "right"
+    }
+  }, "\uBC30\uBD80 \uAE08\uC561"))), /*#__PURE__*/React.createElement("tbody", null, allocResult.allocDetail.map((d, k) => {
+    const isFirstOfAccount = k === 0 || allocResult.allocDetail[k - 1].계정과목 !== d.계정과목;
+    return /*#__PURE__*/React.createElement("tr", {
+      key: k,
+      style: {
+        borderBottom: `1px dashed ${COLOR.border}`,
+        background: isFirstOfAccount ? `${COLOR.surfaceEl}40` : "transparent"
+      }
+    }, /*#__PURE__*/React.createElement("td", {
+      style: {
+        ...tdStyle,
+        fontWeight: isFirstOfAccount ? 500 : 400,
+        color: isFirstOfAccount ? COLOR.text : "transparent"
+      }
+    }, isFirstOfAccount ? d.계정과목 : d.계정과목), /*#__PURE__*/React.createElement("td", {
+      style: {
+        ...tdStyle,
+        textAlign: "right",
+        fontFamily: MONO,
+        color: isFirstOfAccount ? COLOR.purple : "transparent"
+      }
+    }, isFirstOfAccount ? Math.round(d.총공통비).toLocaleString() : "-"), /*#__PURE__*/React.createElement("td", {
+      style: {
+        ...tdStyle,
+        color: COLOR.textDim
+      }
+    }, d.단위), /*#__PURE__*/React.createElement("td", {
+      style: {
+        ...tdStyle,
+        textAlign: "center",
+        fontFamily: MONO,
+        color: COLOR.textMute
+      }
+    }, d.가중치), /*#__PURE__*/React.createElement("td", {
+      style: {
+        ...tdStyle,
+        textAlign: "right",
+        fontFamily: MONO,
+        color: COLOR.textDim
+      }
+    }, (d.비율 * 100).toFixed(1), "%"), /*#__PURE__*/React.createElement("td", {
+      style: {
+        ...tdStyle,
+        textAlign: "right",
+        fontFamily: MONO,
+        color: COLOR.success
+      }
+    }, Math.round(d.금액).toLocaleString()));
+  }))))), /*#__PURE__*/React.createElement("div", {
+    className: "mt-2 text-[10px]",
+    style: {
+      color: COLOR.textMute
+    }
+  }, "\u25B8 \uBC30\uBD80 \uBE44\uC728 = \uB2E8\uC704 \uC778\uC6D0 \xF7 \uC801\uC6A9 \uB2E8\uC704 \uC778\uC6D0 \uD569 \xB7 \uC778\uC6D0\uC774 \uBAA8\uB450 0\uC778 \uACBD\uC6B0 \uADE0\uB4F1 \uBC30\uBD80")));
+}
+const codeStyle = {
+  background: COLOR.surfaceEl,
+  padding: "1px 6px",
+  borderRadius: 3,
+  fontFamily: MONO,
+  fontSize: 10
+};
 
 /* ════════════════ 수주관리 (Master_수주) ════════════════ */
 /* ════════════════ 수주관리 (Master_수주) ════════════════ */
@@ -11797,6 +12755,8 @@ function ImportView({
   sales,
   managerial,
   orders,
+  allocConfig,
+  headcount,
   onReset,
   driveSettings,
   setDriveSettings,
@@ -11806,6 +12766,7 @@ function ImportView({
   syncErr,
   lastSync,
   autoConnecting,
+  adminMode,
   onSync
 }) {
   const finAnnualRef = useRef(null);
@@ -11813,6 +12774,8 @@ function ImportView({
   const salesRef = useRef(null);
   const managerialRef = useRef(null);
   const ordersRef = useRef(null);
+  const allocConfigRef = useRef(null);
+  const headcountRef = useRef(null);
   const [busy, setBusy] = useState(null);
   const [lastErr, setLastErr] = useState(null);
 
@@ -11957,6 +12920,44 @@ function ImportView({
       handleFile(f, "orders");
       e.target.value = "";
     }
+  }), /*#__PURE__*/React.createElement(Dropzone, {
+    kind: "allocConfig",
+    title: "Master_\uBC30\uBD80\uC124\uC815",
+    subtitle: "\uACF5\uD1B5\uBE44 \uBC30\uBD80 \uB9E4\uD2B8\uB9AD\uC2A4 \xB7 \uACC4\uC815\xD7\uB2E8\uC704 (Y/N)",
+    fileCount: allocConfig.length,
+    busy: busy === "allocConfig",
+    error: lastErr && lastErr.kind === "allocConfig" ? lastErr.msg : null,
+    onFile: f => handleFile(f, "allocConfig"),
+    onClick: () => allocConfigRef.current && allocConfigRef.current.click()
+  }), /*#__PURE__*/React.createElement("input", {
+    ref: allocConfigRef,
+    type: "file",
+    accept: ".csv,text/csv",
+    className: "hidden-input",
+    onChange: e => {
+      const f = e.target.files[0];
+      handleFile(f, "allocConfig");
+      e.target.value = "";
+    }
+  }), /*#__PURE__*/React.createElement(Dropzone, {
+    kind: "headcount",
+    title: "Master_\uC778\uC6D0\uD604\uD669",
+    subtitle: "\uC2DC\uAE30\uBCC4 \uB2E8\uC704 \uC778\uC6D0 \xB7 \uBC30\uBD80 \uAC00\uC911\uCE58",
+    fileCount: headcount.length,
+    busy: busy === "headcount",
+    error: lastErr && lastErr.kind === "headcount" ? lastErr.msg : null,
+    onFile: f => handleFile(f, "headcount"),
+    onClick: () => headcountRef.current && headcountRef.current.click()
+  }), /*#__PURE__*/React.createElement("input", {
+    ref: headcountRef,
+    type: "file",
+    accept: ".csv,text/csv",
+    className: "hidden-input",
+    onChange: e => {
+      const f = e.target.files[0];
+      handleFile(f, "headcount");
+      e.target.value = "";
+    }
   })), /*#__PURE__*/React.createElement(GoogleSyncCard, {
     driveSettings: driveSettings,
     setDriveSettings: setDriveSettings,
@@ -11965,7 +12966,8 @@ function ImportView({
     syncErr: syncErr,
     lastSync: lastSync,
     autoConnecting: autoConnecting,
-    onSync: onSync
+    onSync: onSync,
+    adminMode: adminMode
   }), /*#__PURE__*/React.createElement(Card, {
     className: "p-5"
   }, /*#__PURE__*/React.createElement("div", {
@@ -12115,7 +13117,8 @@ function GoogleSyncCard({
   syncErr,
   lastSync,
   autoConnecting,
-  onSync
+  onSync,
+  adminMode
 }) {
   const [showSettings, setShowSettings] = useState(false);
   const [formClientId, setFormClientId] = useState(driveSettings.clientId || "");
@@ -12232,7 +13235,7 @@ function GoogleSyncCard({
     }
   }, "\u26A0 ", syncErr))), /*#__PURE__*/React.createElement("div", {
     className: "flex items-center gap-2 flex-shrink-0"
-  }, /*#__PURE__*/React.createElement("button", {
+  }, adminMode && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowSettings(s => !s),
     className: "px-3 py-1.5 rounded-lg text-xs font-medium",
     style: {
@@ -12252,7 +13255,7 @@ function GoogleSyncCard({
       cursor: isConfigured && !syncing ? "pointer" : "not-allowed",
       opacity: syncing ? 0.6 : 1
     }
-  }, syncing ? "동기화 중..." : isConnected ? "↻ 새로 동기화" : "▶ 지금 동기화"))), showSettings && /*#__PURE__*/React.createElement("div", {
+  }, syncing ? "동기화 중..." : isConnected ? "↻ 새로 동기화" : "▶ 지금 동기화"))), adminMode && showSettings && /*#__PURE__*/React.createElement("div", {
     className: "mt-4 pt-4 space-y-3",
     style: {
       borderTop: `1px dashed ${COLOR.border}`

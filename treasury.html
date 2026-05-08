@@ -123,10 +123,11 @@ const STORAGE_KEYS = {
   drive: 'finance:v2:drive',
 };
 const OAUTH_SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly';
+const ADMIN_PASSWORD = '60hz2026';  // 관리자 비밀번호
 const DEFAULT_DRIVE = {
-  clientId: '',
-  spreadsheetUrl: '',
-  tabs: { accounts: '마스터_계좌', transactions: '마스터_계좌입출금실적', plans: '마스터_자금계획', settings: '설정', loans: '차입금현황' },
+  clientId: '482993916329-t1ias6cie4mg77i18ivqrks8p72ohksb.apps.googleusercontent.com',
+  spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/1zusXSDJLgbrkXSKJ0RGhRpBZF6TO47VlfPuDYQJhY8s/edit',
+  tabs: { accounts: 'Master_Accounts', transactions: 'Master_Actuals', plans: 'Master_Plans', settings: '설정', loans: '차입금현황' },
 };
 const MONTH_ABBR_TO_NUM = {
   Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06',
@@ -829,12 +830,18 @@ function calcMetrics(data, entityFilter, planTypeChoice = '전체계획', actual
   // financialMonthlyRows: 재무제표 넷번 계산용 (한도약정 입출금 제외)
   const computeRunway = (monthlyRows, financialMonthlyRows) => {
     const valid = monthlyRows.filter(m => m && (m.hasActual || m.hasPlan || m.net != null));
-    const avgNet = valid.length ? valid.reduce((s, m) => s + (m.net || 0), 0) / valid.length : 0;
+    const totalInflow = valid.reduce((s, m) => s + (m.inflow || 0), 0);
+    const totalOutflow = valid.reduce((s, m) => s + (m.outflow || 0), 0);
+    const totalNet = valid.reduce((s, m) => s + (m.net || 0), 0);
+    const avgNet = valid.length ? totalNet / valid.length : 0;
     const burn = avgNet < 0 ? -avgNet : 0;
 
     // 재무제표 전용 넷번 (fallback: monthlyRows 동일)
     const finRows = (financialMonthlyRows || monthlyRows).filter(m => m && (m.hasActual || m.hasPlan || m.net != null));
-    const finAvgNet = finRows.length ? finRows.reduce((s, m) => s + (m.net || 0), 0) / finRows.length : 0;
+    const finTotalInflow = finRows.reduce((s, m) => s + (m.inflow || 0), 0);
+    const finTotalOutflow = finRows.reduce((s, m) => s + (m.outflow || 0), 0);
+    const finTotalNet = finRows.reduce((s, m) => s + (m.net || 0), 0);
+    const finAvgNet = finRows.length ? finTotalNet / finRows.length : 0;
     const financialBurn = finAvgNet < 0 ? -finAvgNet : 0;
 
     return {
@@ -842,6 +849,9 @@ function calcMetrics(data, entityFilter, planTypeChoice = '전체계획', actual
       financialBurn,
       monthCount: valid.length,
       financialMonthCount: finRows.length,
+      // 계산 근거
+      totalInflow, totalOutflow, totalNet,
+      finTotalInflow, finTotalOutflow, finTotalNet,
       pureRunway: burn > 0 ? pureFunds / burn : Infinity,
       availableRunway: burn > 0 ? availableForRunway / burn : Infinity,
       financialRunway: financialBurn > 0 ? financialFunds / financialBurn : Infinity,
@@ -1515,11 +1525,31 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
             <div className="flex items-center gap-4 flex-wrap text-xs" style={{ color: 'rgba(255,255,255,0.9)' }}>
               <div className="flex flex-col items-end">
                 <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 10, letterSpacing: '0.08em' }}>실적 넷번</span>
-                <b style={{ fontFamily: 'var(--mono)', fontSize: 14 }}>{actualBurnResult.burn > 0 ? formatCompactKRW(actualBurnResult.burn) : '—'}</b>
+                <b style={{ fontFamily: 'var(--mono)', fontSize: 14 }}
+                   title={actualBurnResult.monthCount > 0
+                     ? `(출금 ${formatCompactKRW(actualBurnResult.totalOutflow)} − 입금 ${formatCompactKRW(actualBurnResult.totalInflow)}) ÷ ${actualBurnResult.monthCount}개월`
+                     : '데이터 없음'}>
+                  {actualBurnResult.burn > 0 ? formatCompactKRW(actualBurnResult.burn) : '—'}
+                </b>
+                {actualBurnResult.monthCount > 0 && (
+                  <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: 9, fontFamily: 'var(--mono)', marginTop: 1 }}>
+                    (출 {formatCompactKRW(actualBurnResult.totalOutflow)} − 입 {formatCompactKRW(actualBurnResult.totalInflow)}) ÷ {actualBurnResult.monthCount}개월
+                  </span>
+                )}
               </div>
               <div className="flex flex-col items-end">
                 <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 10, letterSpacing: '0.08em' }}>재무제표 넷번</span>
-                <b style={{ fontFamily: 'var(--mono)', fontSize: 14 }}>{actualBurnResult.financialBurn > 0 ? formatCompactKRW(actualBurnResult.financialBurn) : '—'}</b>
+                <b style={{ fontFamily: 'var(--mono)', fontSize: 14 }}
+                   title={actualBurnResult.financialMonthCount > 0
+                     ? `(출금 ${formatCompactKRW(actualBurnResult.finTotalOutflow)} − 입금 ${formatCompactKRW(actualBurnResult.finTotalInflow)}) ÷ ${actualBurnResult.financialMonthCount}개월 · 한도약정 입출금 제외`
+                     : '데이터 없음'}>
+                  {actualBurnResult.financialBurn > 0 ? formatCompactKRW(actualBurnResult.financialBurn) : '—'}
+                </b>
+                {actualBurnResult.financialMonthCount > 0 && (
+                  <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: 9, fontFamily: 'var(--mono)', marginTop: 1 }}>
+                    (출 {formatCompactKRW(actualBurnResult.finTotalOutflow)} − 입 {formatCompactKRW(actualBurnResult.finTotalInflow)}) ÷ {actualBurnResult.financialMonthCount}개월
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -1560,6 +1590,9 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
               </div>
               <div className="text-[11px] mt-1" style={{ color: COLOR.textMute }}>
                 순수 {formatCompactKRW(pureFunds)} + 한도 {formatCompactKRW(creditLimitSum)}
+                {creditBalanceSum < 0 && (
+                  <> − 한도사용액 {formatCompactKRW(Math.abs(creditBalanceSum))}</>
+                )}
               </div>
               <div className="mt-4 pt-3 flex items-end justify-between" style={{ borderTop: `1px solid ${COLOR.border}` }}>
                 <div>
@@ -1649,9 +1682,17 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
               <div className="text-xs flex items-center gap-3 flex-wrap" style={{ color: COLOR.textDim }}>
                 <span>넷번: <b style={{ color: COLOR.gold, fontFamily: 'var(--mono)' }}>{confirmedPlanBurnResult.burn > 0 ? formatCompactKRW(confirmedPlanBurnResult.burn) : '—'}</b></span>
                 <span>재무제표: <b style={{ color: COLOR.purple, fontFamily: 'var(--mono)' }}>{confirmedPlanBurnResult.financialBurn > 0 ? formatCompactKRW(confirmedPlanBurnResult.financialBurn) : '—'}</b></span>
-                <span style={{ color: COLOR.textMute }}>{confirmedPlanBurnResult.monthCount}개월</span>
+                <span style={{ color: COLOR.textMute }}>
+                  {planYearFilter === 'all' ? '' : `${planYearFilter}년 `}{confirmedPlanBurnResult.monthCount}개월 평균
+                </span>
               </div>
             </div>
+            {confirmedPlanBurnResult.monthCount > 0 && (
+              <div className="px-4 pt-2 text-[10px]" style={{ color: COLOR.textMute, fontFamily: 'var(--mono)' }}>
+                넷번 = (출 {formatCompactKRW(confirmedPlanBurnResult.totalOutflow)} − 입 {formatCompactKRW(confirmedPlanBurnResult.totalInflow)}) ÷ {confirmedPlanBurnResult.monthCount}개월
+                <span style={{ marginLeft: 8, color: COLOR.textMute }}>· 마감월 이전 = 실적 / 이후 = 확정계획</span>
+              </div>
+            )}
             <div className="p-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
                 <div className="p-4 rounded-lg" style={{ background: `${COLOR.gold}15`, border: `1px solid ${COLOR.gold}55` }}>
@@ -1724,9 +1765,17 @@ function DashboardView({ metrics, planTypeChoice, setPlanTypeChoice, planYearFil
             <div className="text-xs flex items-center gap-3 flex-wrap" style={{ color: COLOR.textDim }}>
               <span>넷번: <b style={{ color: COLOR.info, fontFamily: 'var(--mono)' }}>{allPlanBurnResult.burn > 0 ? formatCompactKRW(allPlanBurnResult.burn) : '—'}</b></span>
               <span>재무제표: <b style={{ color: COLOR.purple, fontFamily: 'var(--mono)' }}>{allPlanBurnResult.financialBurn > 0 ? formatCompactKRW(allPlanBurnResult.financialBurn) : '—'}</b></span>
-              <span style={{ color: COLOR.textMute }}>{allPlanBurnResult.monthCount}개월</span>
+              <span style={{ color: COLOR.textMute }}>
+                {planYearFilter === 'all' ? '' : `${planYearFilter}년 `}{allPlanBurnResult.monthCount}개월 평균
+              </span>
             </div>
           </div>
+          {allPlanBurnResult.monthCount > 0 && (
+            <div className="px-4 pt-2 text-[10px]" style={{ color: COLOR.textMute, fontFamily: 'var(--mono)' }}>
+              넷번 = (출 {formatCompactKRW(allPlanBurnResult.totalOutflow)} − 입 {formatCompactKRW(allPlanBurnResult.totalInflow)}) ÷ {allPlanBurnResult.monthCount}개월
+              <span style={{ marginLeft: 8, color: COLOR.textMute }}>· 마감월 이전 = 실적 / 이후 = 사업계획</span>
+            </div>
+          )}
           <div className="p-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
               <div className="p-3 rounded-lg" style={{ background: COLOR.surface, border: `1px solid ${COLOR.border}` }}>
@@ -3245,7 +3294,7 @@ function LoansView({ loans, entityFilter }) {
 // ============================================================================
 //  IMPORT VIEW
 // ============================================================================
-function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, accessToken, setAccessToken, tokenClient, setTokenClient, teamSettings, setTeamSettings, setLoans }) {
+function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, accessToken, setAccessToken, tokenClient, setTokenClient, teamSettings, setTeamSettings, setLoans, adminMode }) {
   const [mode, setMode] = useState('file'); // 'file' | 'drive'
   const [importStatus, setImportStatus] = useState({});
   const fileRefs = { accounts: useRef(null), transactions: useRef(null), plans: useRef(null) };
@@ -3389,22 +3438,40 @@ function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, a
     setSyncStatus('loading');
     setSyncMsg('동기화 중...');
     try {
-      const [accArr, txArr, planArr, settingsArr, loansArr] = await Promise.all([
-        fetchSheetArray(ssid, driveSettings.tabs.accounts, token),
-        fetchSheetArray(ssid, driveSettings.tabs.transactions, token),
-        fetchSheetArray(ssid, driveSettings.tabs.plans, token),
-        fetchSheetArray(ssid, '설정', token).catch(() => []),
-        fetchSheetRange(ssid, '차입금현황', 'B8:R10000', token).catch(() => []),
+      // 시트별 결과+에러 추적
+      const fetchOrError = async (label, fn) => {
+        try { return { label, values: await fn(), error: null }; }
+        catch (e) {
+          const msg = String(e.message || e);
+          let kind = 'unknown';
+          if (/403|Permission|denied/i.test(msg)) kind = 'permission';
+          else if (/404|not found|cannot.*find/i.test(msg)) kind = 'notFound';
+          return { label, values: [], error: { kind, msg } };
+        }
+      };
+      const [accR, txR, planR, settingsR, loansR] = await Promise.all([
+        fetchOrError('계좌', () => fetchSheetArray(ssid, driveSettings.tabs.accounts, token)),
+        fetchOrError('입출금', () => fetchSheetArray(ssid, driveSettings.tabs.transactions, token)),
+        fetchOrError('자금계획', () => fetchSheetArray(ssid, driveSettings.tabs.plans, token)),
+        fetchOrError('설정', () => fetchSheetArray(ssid, '설정', token)),
+        fetchOrError('차입금', () => fetchSheetRange(ssid, '차입금현황', 'B8:R10000', token)),
       ]);
-      const accHR = sheetArrayToRowsWithHeaders(accArr);
-      const txHR = sheetArrayToRowsWithHeaders(txArr);
-      const planHR = sheetArrayToRowsWithHeaders(planArr);
+      const permDenied = [accR, txR, planR, settingsR, loansR].filter(r => r.error && r.error.kind === 'permission');
+      if (permDenied.length > 0 && [accR, txR, planR].every(r => r.error && r.error.kind === 'permission')) {
+        // 핵심 시트 모두 권한 거부면 즉시 안내
+        setSyncStatus('error');
+        setSyncMsg(`이 시트에 접근 권한이 없습니다. 관리자에게 시트 공유를 요청하세요.\n(차단된 시트: ${permDenied.map(r => r.label).join(', ')})`);
+        return;
+      }
+      const accHR = sheetArrayToRowsWithHeaders(accR.values);
+      const txHR = sheetArrayToRowsWithHeaders(txR.values);
+      const planHR = sheetArrayToRowsWithHeaders(planR.values);
       const accounts = parseAccountsFile(accHR.headers, accHR.rows);
       const transactions = parseActualsFile(txHR.headers, txHR.rows);
       const plans = parsePlansFile(planHR.headers, planHR.rows);
-      const parsedSettings = parseTeamSettings(settingsArr);
+      const parsedSettings = parseTeamSettings(settingsR.values);
       const entitiesFromAccounts = [...new Set(accounts.map(a => a.entity))].filter(Boolean);
-      const parsedLoans = parseLoans(loansArr, entitiesFromAccounts);
+      const parsedLoans = parseLoans(loansR.values, entitiesFromAccounts);
       setData({ accounts, transactions, plans });
       try { localStorage.setItem('finance:v2:teamSettings', JSON.stringify(parsedSettings)); } catch {}
       if (setTeamSettings) setTeamSettings(parsedSettings);
@@ -3414,10 +3481,19 @@ function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, a
       try { localStorage.setItem('finance:v2:lastSync', now); } catch {}
       setLastSync(now);
       setSyncStatus('success');
-      setSyncMsg(`자동 동기화 완료 · 계좌 ${accounts.length} / 거래 ${transactions.length} / 계획 ${plans.length} / 차입금 ${parsedLoans.rows.length}`);
+      let msg = `자동 동기화 완료 · 계좌 ${accounts.length} / 거래 ${transactions.length} / 계획 ${plans.length} / 차입금 ${parsedLoans.rows.length}`;
+      if (permDenied.length > 0) {
+        msg += `\n⚠ 일부 시트 권한 없음: ${permDenied.map(r => r.label).join(', ')} — 관리자에게 공유 요청`;
+      }
+      setSyncMsg(msg);
     } catch (e) {
       setSyncStatus('error');
-      setSyncMsg(`자동 동기화 실패: ${e.message}`);
+      const errMsg = String(e.message || e);
+      if (/403|Permission|denied/i.test(errMsg)) {
+        setSyncMsg(`이 시트에 접근 권한이 없습니다. 관리자에게 시트 공유를 요청하세요.`);
+      } else {
+        setSyncMsg(`자동 동기화 실패: ${e.message}`);
+      }
     }
   };
 
@@ -3436,31 +3512,51 @@ function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, a
     setSyncStatus('loading');
     setSyncMsg('동기화 중...');
     try {
-      const [accArr, txArr, planArr, settingsArr, loansArr] = await Promise.all([
-        fetchSheetArray(ssid, driveSettings.tabs.accounts, accessToken),
-        fetchSheetArray(ssid, driveSettings.tabs.transactions, accessToken),
-        fetchSheetArray(ssid, driveSettings.tabs.plans, accessToken),
-        // 설정 탭은 선택사항 - 없어도 에러 안 남
-        fetchSheetArray(ssid, '설정', accessToken).catch(() => []),
-        // 차입금 시트도 선택사항 - B8:R부터만 가져옴
-        fetchSheetRange(ssid, '차입금현황', 'B8:R10000', accessToken).catch(() => []),
+      // 시트별 결과+에러 추적
+      const fetchOrError = async (label, fn) => {
+        try { return { label, values: await fn(), error: null }; }
+        catch (e) {
+          const msg = String(e.message || e);
+          let kind = 'unknown';
+          if (/403|Permission|denied/i.test(msg)) kind = 'permission';
+          else if (/404|not found|cannot.*find/i.test(msg)) kind = 'notFound';
+          else if (/401|unauthorized|expired/i.test(msg)) kind = 'auth';
+          return { label, values: [], error: { kind, msg } };
+        }
+      };
+      const [accR, txR, planR, settingsR, loansR] = await Promise.all([
+        fetchOrError('계좌', () => fetchSheetArray(ssid, driveSettings.tabs.accounts, accessToken)),
+        fetchOrError('입출금', () => fetchSheetArray(ssid, driveSettings.tabs.transactions, accessToken)),
+        fetchOrError('자금계획', () => fetchSheetArray(ssid, driveSettings.tabs.plans, accessToken)),
+        fetchOrError('설정', () => fetchSheetArray(ssid, '설정', accessToken)),
+        fetchOrError('차입금', () => fetchSheetRange(ssid, '차입금현황', 'B8:R10000', accessToken)),
       ]);
-      // ⭐ CSV 텍스트로 변환 후 파일 업로드와 완전히 동일한 파서 사용
-      // 이렇게 하면 Sheets 동기화 = CSV 업로드 결과가 100% 일치
-      const accHR = sheetArrayToRowsWithHeaders(accArr);
-      const txHR = sheetArrayToRowsWithHeaders(txArr);
-      const planHR = sheetArrayToRowsWithHeaders(planArr);
+      // 토큰 만료 체크
+      const authErr = [accR, txR, planR].find(r => r.error && r.error.kind === 'auth');
+      if (authErr) {
+        setSyncStatus('error');
+        setSyncMsg('토큰이 만료되었습니다. 다시 연결해주세요.');
+        setAccessToken(null);
+        return;
+      }
+      // 핵심 시트 모두 권한 거부
+      const permDenied = [accR, txR, planR, settingsR, loansR].filter(r => r.error && r.error.kind === 'permission');
+      if (permDenied.length > 0 && [accR, txR, planR].every(r => r.error && r.error.kind === 'permission')) {
+        setSyncStatus('error');
+        setSyncMsg(`이 시트에 접근 권한이 없습니다. 관리자에게 시트 공유를 요청하세요.\n(차단된 시트: ${permDenied.map(r => r.label).join(', ')})`);
+        return;
+      }
+
+      const accHR = sheetArrayToRowsWithHeaders(accR.values);
+      const txHR = sheetArrayToRowsWithHeaders(txR.values);
+      const planHR = sheetArrayToRowsWithHeaders(planR.values);
 
       const accounts = parseAccountsFile(accHR.headers, accHR.rows);
       const transactions = parseActualsFile(txHR.headers, txHR.rows);
       const plans = parsePlansFile(planHR.headers, planHR.rows);
-
-      // 설정 탭 파싱: 2열(키/값) 테이블
-      const parsedSettings = parseTeamSettings(settingsArr);
-
-      // 차입금 파싱 (대시보드 법인 목록만 필터)
+      const parsedSettings = parseTeamSettings(settingsR.values);
       const entitiesFromAccounts = [...new Set(accounts.map(a => a.entity))].filter(Boolean);
-      const parsedLoans = parseLoans(loansArr, entitiesFromAccounts);
+      const parsedLoans = parseLoans(loansR.values, entitiesFromAccounts);
 
       // 계좌 매칭 확인
       let unmatchedMsg = '';
@@ -3474,22 +3570,26 @@ function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, a
       }
 
       setData({ accounts, transactions, plans });
-      // 팀 설정 저장 (마감월 등)
       try { localStorage.setItem('finance:v2:teamSettings', JSON.stringify(parsedSettings)); } catch {}
       if (setTeamSettings) setTeamSettings(parsedSettings);
-      // 차입금 저장
       try { localStorage.setItem('finance:v2:loans', JSON.stringify(parsedLoans)); } catch {}
       if (setLoans) setLoans(parsedLoans);
       const now = new Date().toISOString();
       try { localStorage.setItem('finance:v2:lastSync', now); } catch {}
       setLastSync(now);
       setSyncStatus('success');
-      setSyncMsg(`동기화 완료 · 계좌 ${accounts.length} / 거래 ${transactions.length} / 계획 ${plans.length} / 차입금 ${parsedLoans.rows.length}${unmatchedMsg}`);
+      let msg = `동기화 완료 · 계좌 ${accounts.length} / 거래 ${transactions.length} / 계획 ${plans.length} / 차입금 ${parsedLoans.rows.length}${unmatchedMsg}`;
+      if (permDenied.length > 0) {
+        msg += `\n⚠ 일부 시트 권한 없음: ${permDenied.map(r => r.label).join(', ')} — 관리자에게 공유 요청`;
+      }
+      setSyncMsg(msg);
     } catch (e) {
       setSyncStatus('error');
       if (String(e.message).includes('401') || String(e.message).toLowerCase().includes('unauthorized')) {
         setSyncMsg('토큰이 만료되었습니다. 다시 연결해주세요.');
         setAccessToken(null);
+      } else if (/403|Permission|denied/i.test(String(e.message || e))) {
+        setSyncMsg('이 시트에 접근 권한이 없습니다. 관리자에게 시트 공유를 요청하세요.');
       } else {
         setSyncMsg(`오류: ${e.message}`);
       }
@@ -3654,15 +3754,19 @@ function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, a
                  style={{ color: COLOR.info, background: `${COLOR.info}14`, border: `1px solid ${COLOR.info}40` }}>
               <AlertCircle size={13} style={{ marginTop: 2 }} />
               <div>
-                Drive 연동은 한 번의 <b>Google Cloud 설정</b>이 필요합니다 (OAuth Client ID 발급). 설정 후 시트의 탭 이름을 지정하면 파일 업로드와 동일한 파서로 데이터를 가져옵니다.
+                {adminMode
+                  ? <>Drive 연동은 한 번의 <b>Google Cloud 설정</b>이 필요합니다 (OAuth Client ID 발급). 설정 후 시트의 탭 이름을 지정하면 파일 업로드와 동일한 파서로 데이터를 가져옵니다.</>
+                  : <><b>Drive 연결</b>을 누르면 본인 계정으로 로그인하여 권한이 부여된 시트만 가져옵니다. 시트 접근 권한은 관리자가 Google Sheets에서 부여합니다.</>
+                }
               </div>
             </div>
           </Card>
 
+          {adminMode && (<>
           <Card className="p-5">
             <div className="flex items-center gap-2 mb-4">
               <Settings size={16} style={{ color: COLOR.gold }} />
-              <div className="text-sm font-semibold" style={{ color: COLOR.text }}>연동 설정</div>
+              <div className="text-sm font-semibold" style={{ color: COLOR.text }}>연동 설정 <span className="text-[10px] px-2 py-0.5 rounded-full font-medium" style={{ color: COLOR.warn, background: `${COLOR.warn}20`, border: `1px solid ${COLOR.warn}50`, marginLeft: 6 }}>관리자 전용</span></div>
             </div>
             <div className="space-y-4">
               <div>
@@ -3720,6 +3824,7 @@ function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, a
               <li>발급된 Client ID를 위 필드에 입력 → 저장 → Drive 연결 → 동기화</li>
             </ol>
           </Card>
+          </>)}
         </>
       )}
 
@@ -3948,6 +4053,32 @@ function ImportView({ data, setData, onReset, driveSettings, setDriveSettings, a
 // ============================================================================
 function FinanceDashboard() {
   const [tab, setTab] = useState('dashboard');
+  // 관리자 모드 — URL ?admin=1 또는 콘솔에서 window.unlockAdmin() 호출 시 활성
+  const [adminMode, setAdminMode] = useState(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('admin') === '1') return true;
+        if (window.localStorage && window.localStorage.getItem('finance:v2:adminMode') === '1') return true;
+      }
+    } catch (e) {}
+    return false;
+  });
+  // 콘솔에서 unlockAdmin() 호출하면 활성
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.unlockAdmin = () => {
+        try { window.localStorage.setItem('finance:v2:adminMode', '1'); } catch (e) {}
+        setAdminMode(true);
+        console.log('✅ Admin mode 활성화됨. 페이지를 새로고침하지 않아도 설정이 보입니다.');
+      };
+      window.lockAdmin = () => {
+        try { window.localStorage.removeItem('finance:v2:adminMode'); } catch (e) {}
+        setAdminMode(false);
+        console.log('🔒 Admin mode 해제됨.');
+      };
+    }
+  }, []);
   const [entityFilter, setEntityFilter] = useState('all');
   const [planTypeChoice, setPlanTypeChoice] = useState('전체계획');
   const [planYearFilter, setPlanYearFilter] = useState('2026');
@@ -4069,22 +4200,39 @@ function FinanceDashboard() {
             const ssid = extractSpreadsheetId(driveSettings.spreadsheetUrl);
             if (!ssid) { setAutoConnecting(false); return; }
             try {
-              const [accArr, txArr, planArr, settingsArr, loansArr] = await Promise.all([
-                fetchSheetArray(ssid, driveSettings.tabs.accounts, response.access_token),
-                fetchSheetArray(ssid, driveSettings.tabs.transactions, response.access_token),
-                fetchSheetArray(ssid, driveSettings.tabs.plans, response.access_token),
-                fetchSheetArray(ssid, '설정', response.access_token).catch(() => []),
-                fetchSheetRange(ssid, '차입금현황', 'B8:R10000', response.access_token).catch(() => []),
+              const fetchOrError = async (label, fn) => {
+                try { return { label, values: await fn(), error: null }; }
+                catch (e) {
+                  const msg = String(e.message || e);
+                  let kind = 'unknown';
+                  if (/403|Permission|denied/i.test(msg)) kind = 'permission';
+                  else if (/404|not found|cannot.*find/i.test(msg)) kind = 'notFound';
+                  return { label, values: [], error: { kind, msg } };
+                }
+              };
+              const [accR, txR, planR, settingsR, loansR] = await Promise.all([
+                fetchOrError('계좌', () => fetchSheetArray(ssid, driveSettings.tabs.accounts, response.access_token)),
+                fetchOrError('입출금', () => fetchSheetArray(ssid, driveSettings.tabs.transactions, response.access_token)),
+                fetchOrError('자금계획', () => fetchSheetArray(ssid, driveSettings.tabs.plans, response.access_token)),
+                fetchOrError('설정', () => fetchSheetArray(ssid, '설정', response.access_token)),
+                fetchOrError('차입금', () => fetchSheetRange(ssid, '차입금현황', 'B8:R10000', response.access_token)),
               ]);
-              const accHR = sheetArrayToRowsWithHeaders(accArr);
-              const txHR = sheetArrayToRowsWithHeaders(txArr);
-              const planHR = sheetArrayToRowsWithHeaders(planArr);
+              // 핵심 시트 모두 권한 거부 시 안내
+              const permDenied = [accR, txR, planR, settingsR, loansR].filter(r => r.error && r.error.kind === 'permission');
+              if (permDenied.length > 0 && [accR, txR, planR].every(r => r.error && r.error.kind === 'permission')) {
+                console.warn('Auto-sync: permission denied for all main sheets');
+                setAutoConnecting(false);
+                return;
+              }
+              const accHR = sheetArrayToRowsWithHeaders(accR.values);
+              const txHR = sheetArrayToRowsWithHeaders(txR.values);
+              const planHR = sheetArrayToRowsWithHeaders(planR.values);
               const accounts = parseAccountsFile(accHR.headers, accHR.rows);
               const transactions = parseActualsFile(txHR.headers, txHR.rows);
               const plans = parsePlansFile(planHR.headers, planHR.rows);
-              const parsedSettings = parseTeamSettings(settingsArr);
+              const parsedSettings = parseTeamSettings(settingsR.values);
               const entitiesFromAccounts = [...new Set(accounts.map(a => a.entity))].filter(Boolean);
-              const parsedLoans = parseLoans(loansArr, entitiesFromAccounts);
+              const parsedLoans = parseLoans(loansR.values, entitiesFromAccounts);
               setData({ accounts, transactions, plans });
               try { localStorage.setItem('finance:v2:teamSettings', JSON.stringify(parsedSettings)); } catch {}
               setTeamSettings(parsedSettings);
@@ -4175,6 +4323,32 @@ function FinanceDashboard() {
                   <Spinner size={10} /> Drive 연결 중...
                 </div>
               ) : null}
+              {/* 관리자 모드 토글 (비밀번호 프롬프트) */}
+              {adminMode ? (
+                <button onClick={() => {
+                  if (confirm('관리자 모드를 해제하시겠습니까?')) {
+                    try { localStorage.removeItem('finance:v2:adminMode'); } catch {}
+                    setAdminMode(false);
+                  }
+                }} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px]"
+                   style={{ background: `${COLOR.warn}14`, color: COLOR.warn, border: `1px solid ${COLOR.warn}40`, cursor: 'pointer' }}>
+                  🔓 관리자 모드 (해제)
+                </button>
+              ) : (
+                <button onClick={() => {
+                  const pw = prompt('관리자 비밀번호를 입력하세요:');
+                  if (pw === null) return;
+                  if (pw === ADMIN_PASSWORD) {
+                    try { localStorage.setItem('finance:v2:adminMode', '1'); } catch {}
+                    setAdminMode(true);
+                  } else if (pw !== '') {
+                    alert('비밀번호가 일치하지 않습니다.');
+                  }
+                }} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px]"
+                   style={{ background: COLOR.surfaceEl, color: COLOR.textDim, border: `1px solid ${COLOR.border}`, cursor: 'pointer' }}>
+                  🔒 관리자 전환
+                </button>
+              )}
               <div style={{ position: 'relative' }}>
                 <button onClick={() => setEntityMenuOpen(v => !v)} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm"
                         style={{ background: COLOR.surfaceEl, border: `1px solid ${COLOR.border}`, color: COLOR.text }}>
@@ -4236,6 +4410,7 @@ function FinanceDashboard() {
             tokenClient={tokenClient} setTokenClient={setTokenClient}
             teamSettings={teamSettings} setTeamSettings={setTeamSettings}
             setLoans={setLoans}
+            adminMode={adminMode}
           />}
         </main>
 
