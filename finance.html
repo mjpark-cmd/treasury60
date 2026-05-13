@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;1,500&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+KR:wght@400;500;600;700&family=Noto+Serif+KR:wght@500&display=swap" rel="stylesheet">
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   body { margin: 0; font-family: -apple-system, 'Noto Sans KR', system-ui, sans-serif; background: #f4f6fa; }
   .tabular-nums { font-variant-numeric: tabular-nums; }
@@ -1113,6 +1114,71 @@ function getHeadcountAt(headcountRows, unit, month) {
   return matches[0].인원;
 }
 
+/* ══════════ Excel 내보내기 공통 헬퍼 ══════════
+ * filename: 확장자 .csv 포함 가능 (자동으로 .xlsx로 변환)
+ * headers: 컬럼 이름 배열
+ * rowsAsArrays: 각 행의 셀 값 배열 (headers 순서와 일치)
+ *   또는 객체 배열도 지원 — 헤더 키로 룩업
+ * SheetJS 미로드 시 CSV로 폴백
+ */
+function downloadExcel(filename, headers, rowsAsArrays, sheetName) {
+  const xlsxName = filename.replace(/\.csv$/i, ".xlsx").replace(/(\.xlsx)?$/, m => m === ".xlsx" ? m : ".xlsx");
+  if (typeof XLSX === "undefined") {
+    // CSV 폴백
+    const csv = [headers.join(",")];
+    rowsAsArrays.forEach(r => {
+      const arr = Array.isArray(r) ? r : headers.map(h => r[h]);
+      csv.push(arr.map(c => {
+        const s = String(c == null ? "" : c);
+        return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+      }).join(","));
+    });
+    const blob = new Blob(["\uFEFF" + csv.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return;
+  }
+  // 배열 → 객체로 변환 (헤더 순서 보장)
+  const objRows = rowsAsArrays.map(r => {
+    if (Array.isArray(r)) {
+      const obj = {};
+      headers.forEach((h, i) => {
+        const v = r[i];
+        // 숫자 문자열은 진짜 숫자로
+        if (v == null || v === "") obj[h] = "";
+        else if (typeof v === "number") obj[h] = v;
+        else if (typeof v === "string" && /^-?[\d,]+(\.\d+)?$/.test(v.trim())) {
+          const num = Number(v.replace(/,/g, ""));
+          obj[h] = isNaN(num) ? v : num;
+        } else obj[h] = v;
+      });
+      return obj;
+    }
+    return r;
+  });
+  const ws = XLSX.utils.json_to_sheet(objRows, { header: headers });
+  // 컬럼 너비 자동 조정
+  ws["!cols"] = headers.map(h => {
+    const headerLen = String(h).length;
+    const maxValLen = objRows.reduce((m, r) => {
+      const v = r[h];
+      const len = v == null ? 0 : String(v).length;
+      return Math.max(m, len);
+    }, 0);
+    return { wch: Math.min(40, Math.max(8, Math.max(headerLen, maxValLen) * 1.2)) };
+  });
+  const wb = XLSX.utils.book_new();
+  const safeName = (sheetName || filename.replace(/\.(csv|xlsx)$/i, "")).replace(/[\\\/\?\*\[\]:]/g, "_").slice(0, 31) || "Sheet1";
+  XLSX.utils.book_append_sheet(wb, ws, safeName);
+  XLSX.writeFile(wb, xlsxName);
+}
+
 /* ══════════ 집계 ══════════ */
 function filterIS(rows, entity, year) {
   return rows.filter(r => {
@@ -1740,6 +1806,8 @@ function App() {
   const [autoConnecting, setAutoConnecting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncErr, setSyncErr] = useState(null);
+  // 시트 접근 권한 거부 상태 (자동 동기화 시 핵심 시트 모두 403일 때 true)
+  const [accessDenied, setAccessDenied] = useState(false);
   const [lastSync, setLastSync] = useState(() => {
     try {
       return localStorage.getItem(STORAGE_KEYS.lastSync) || "";
@@ -1860,6 +1928,15 @@ function App() {
       // 권한 거부된 시트 / 못 찾은 시트 안내
       const permDenied = results.filter(r => r.error && r.error.kind === "permission");
       const notFound = results.filter(r => r.error && r.error.kind === "notFound");
+      // 핵심 시트 (annual + sales + managerial) 모두 권한 거부 시 전체 차단
+      const coreLabels = ["재무제표(연간)", "매출", "관리손익"];
+      const corePermDenied = permDenied.filter(r => coreLabels.includes(r.label));
+      if (corePermDenied.length >= 2) {
+        // 핵심 시트 2개 이상 거부 → 전체 화면 안내
+        setAccessDenied(true);
+      } else {
+        setAccessDenied(false);
+      }
       if (permDenied.length > 0) {
         const sheetList = permDenied.map(r => `${r.label} (${r.sheetName})`).join(", ");
         setSyncErr(`다음 시트에 접근 권한이 없습니다 — 관리자에게 공유 요청하세요: ${sheetList}`);
@@ -2231,10 +2308,50 @@ function App() {
   }, "\uD83D\uDCBC \uC190\uC775\uBD84\uC11D"), /*#__PURE__*/React.createElement(TabButton, {
     active: tab === "orders",
     onClick: () => setTab("orders")
-  }, "\uD83C\uDFAF \uC218\uC8FC\uAD00\uB9AC"), /*#__PURE__*/React.createElement(TabButton, {
+  }, "\uD83C\uDFAF \uC218\uC8FC\uAD00\uB9AC"), adminMode && /*#__PURE__*/React.createElement(TabButton, {
     active: tab === "import",
     onClick: () => setTab("import")
-  }, "\u2B06 \uB370\uC774\uD130 \uAC00\uC838\uC624\uAE30")), /*#__PURE__*/React.createElement("main", null, !hasData && tab !== "import" && /*#__PURE__*/React.createElement(Card, {
+  }, "\u2B06 \uB370\uC774\uD130 \uAC00\uC838\uC624\uAE30")), /*#__PURE__*/React.createElement("main", null,
+  accessDenied && !adminMode && /*#__PURE__*/React.createElement(Card, {
+    className: "p-12 text-center",
+    style: {
+      background: `${COLOR.warn || '#c89c3d'}06`,
+      borderColor: `${COLOR.warn || '#c89c3d'}40`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-5xl mb-4"
+  }, "\uD83D\uDD12"), /*#__PURE__*/React.createElement("div", {
+    className: "text-xl font-bold mb-2",
+    style: {
+      color: COLOR.text
+    }
+  }, "\uC811\uADFC \uAD8C\uD55C \uC5C6\uC74C"), /*#__PURE__*/React.createElement("div", {
+    className: "text-sm mb-6",
+    style: {
+      color: COLOR.textDim,
+      lineHeight: 1.8,
+      maxWidth: 480,
+      margin: "0 auto 24px"
+    }
+  }, "\uC7AC\uBB34\u00B7\uC190\uC775 \ub370\uc774\ud130\uc5d0 \uC811\uADFC\uD560 \uAD8C\uD55C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.", /*#__PURE__*/React.createElement("br", null), "Google Drive\uC5D0 \uB85C\uADF8\uC778\uC740 \uC131\uACF5\uD588\uC9C0\uB9CC \uC7AC\uBB34\u00B7\uc190\uc775 \uC2DC\uD2B8\uAC00 \uACF5\uC720\uB418\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: COLOR.warn || "#c89c3d"
+    }
+  }, "\uAD00\uB9AC\uC790\uC5D0\uAC8C \uB2E4\uC74C \uC2DC\uD2B8 \uACF5\uC720\uB97C \uC694\uCCAD\uD574\uC8FC\uC138\uC694:")), /*#__PURE__*/React.createElement("div", {
+    className: "inline-block text-left text-[12px] px-5 py-3 rounded-lg",
+    style: {
+      background: COLOR.surfaceEl,
+      border: `1px solid ${COLOR.border}`,
+      fontFamily: MONO,
+      color: COLOR.text
+    }
+  }, "\u25B8 Master_\uC7AC\uBB34\uC81C\uD45C(\uC5F0\uAC04)", /*#__PURE__*/React.createElement("br", null), "\u25B8 Master_\uC7AC\uBB34\uC81C\uD45C(\uC6D4\uAC04)", /*#__PURE__*/React.createElement("br", null), "\u25B8 Master_\uB9E4\uCD9C", /*#__PURE__*/React.createElement("br", null), "\u25B8 Master_\uAD00\uB9AC\uC190\uC775", /*#__PURE__*/React.createElement("br", null), "\u25B8 Master_\uC218\uC8FC"), /*#__PURE__*/React.createElement("div", {
+    className: "text-[11px] mt-5",
+    style: {
+      color: COLOR.textMute
+    }
+  }, "\uAD00\uB9AC\uC790\uB77C\uBA74 \uC6B0\uCE21 \uC0C1\uB2E8 \"\uD83D\uDD12 \uAD00\uB9AC\uC790 \uC804\uD658\" \uBC84\uD2BC\uC73C\uB85C \uC124\uC815\uC744 \uBCC0\uACBD\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4")),
+  !accessDenied && !hasData && tab !== "import" && /*#__PURE__*/React.createElement(Card, {
     className: "p-12 text-center"
   }, /*#__PURE__*/React.createElement("div", {
     className: "text-3xl mb-3"
@@ -2246,9 +2363,10 @@ function App() {
   }, "\uB370\uC774\uD130\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4"), /*#__PURE__*/React.createElement("div", {
     className: "text-sm mb-6",
     style: {
-      color: COLOR.textDim
+      color: COLOR.textDim,
+      lineHeight: 1.7
     }
-  }, "'\uB370\uC774\uD130 \uAC00\uC838\uC624\uAE30' \uD0ED\uC5D0\uC11C \uC7AC\uBB34\uC81C\uD45C / \uB9E4\uCD9C CSV\uB97C \uC5C5\uB85C\uB4DC\uD558\uC138\uC694."), /*#__PURE__*/React.createElement("button", {
+  }, adminMode ? "'\uB370\uC774\uD130 \uAC00\uC838\uC624\uAE30' \uD0ED\uC5D0\uC11C \uC7AC\uBB34\uC81C\uD45C / \uB9E4\uCD9C CSV\uB97C \uC5C5\uB85C\uB4DC\uD558\uC138\uC694." : "Google Drive\uC5D0 \uC5F0\uACB0\uD558\uBA74 \uB370\uC774\uD130\uAC00 \uC790\uB3D9\uC73C\uB85C \uB85C\uB4DC\uB429\uB2C8\uB2E4."), adminMode && /*#__PURE__*/React.createElement("button", {
     onClick: () => setTab("import"),
     className: "px-5 py-2.5 rounded-lg text-sm font-semibold",
     style: {
@@ -2257,35 +2375,57 @@ function App() {
       border: "none",
       cursor: "pointer"
     }
-  }, "\uC5C5\uB85C\uB4DC\uD558\uB7EC \uAC00\uAE30")), hasData && tab === "dashboard" && /*#__PURE__*/React.createElement(DashboardView, {
+  }, "\uC5C5\uB85C\uB4DC\uD558\uB7EC \uAC00\uAE30")),
+  /* 일반 사용자가 URL로 import 탭 접근 시 */
+  tab === "import" && !adminMode && /*#__PURE__*/React.createElement(Card, {
+    className: "p-12 text-center",
+    style: {
+      background: `${COLOR.warn || '#c89c3d'}06`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-5xl mb-4"
+  }, "\uD83D\uDD12"), /*#__PURE__*/React.createElement("div", {
+    className: "text-xl font-bold mb-2",
+    style: {
+      color: COLOR.text
+    }
+  }, "\uAD00\uB9AC\uC790 \uC804\uC6A9 \uD654\uBA74"), /*#__PURE__*/React.createElement("div", {
+    className: "text-sm",
+    style: {
+      color: COLOR.textDim,
+      lineHeight: 1.7
+    }
+  }, "\uB370\uC774\uD130 \uAC00\uC838\uC624\uAE30\uB294 \uAD00\uB9AC\uC790\uB9CC \uC811\uADFC \uAC00\uB2A5\uD569\uB2C8\uB2E4.", /*#__PURE__*/React.createElement("br", null), "\uC77C\uBC18 \uC0AC\uC6A9\uC790\uB294 Drive \uC5F0\uACB0\uC744 \uD1B5\uD574 \uC2DC\uD2B8\uAC00 \uC790\uB3D9 \uB3D9\uAE30\uD654\uB429\uB2C8\uB2E4.")),
+  hasData && !accessDenied && tab === "dashboard" && /*#__PURE__*/React.createElement(DashboardView, {
     financial: financialAnnual,
     sales: sales,
     year: year,
     entity: entity,
     calcs: calcs,
     allYears: allYears
-  }), hasData && tab === "statements" && /*#__PURE__*/React.createElement(StatementsView, {
+  }), hasData && !accessDenied && tab === "statements" && /*#__PURE__*/React.createElement(StatementsView, {
     financialAnnual: financialAnnual,
     financialMonthly: financialMonthly,
     sales: sales,
     year: year,
     entity: entity
-  }), tab === "sales" && /*#__PURE__*/React.createElement(SalesView, {
+  }), !accessDenied && tab === "sales" && /*#__PURE__*/React.createElement(SalesView, {
     sales: sales,
     year: year,
     entity: entity
-  }), tab === "pnl" && /*#__PURE__*/React.createElement(PnlView, {
+  }), !accessDenied && tab === "pnl" && /*#__PURE__*/React.createElement(PnlView, {
     managerial: managerial,
     year: year,
+    entity: entity,
     allocConfig: allocConfig,
     headcount: headcount,
     sales: sales,
     setAllocConfig: setAllocConfig,
     setHeadcount: setHeadcount
-  }), tab === "orders" && /*#__PURE__*/React.createElement(OrdersView, {
+  }), !accessDenied && tab === "orders" && /*#__PURE__*/React.createElement(OrdersView, {
     orders: orders,
     managerial: managerial
-  }), tab === "import" && /*#__PURE__*/React.createElement(ImportView, {
+  }), tab === "import" && adminMode && /*#__PURE__*/React.createElement(ImportView, {
     onFile: onFile,
     financial: financial,
     sales: sales,
@@ -7302,7 +7442,7 @@ function SalesView({
       color: COLOR.gold,
       cursor: "pointer"
     }
-  }, "\u2B07 CSV \uB2E4\uC6B4\uB85C\uB4DC (", yearRowsFiltered.length, "\uAC74)"))), /*#__PURE__*/React.createElement(FilterSection, {
+  }, "\u2B07 Excel \uB2E4\uC6B4\uB85C\uB4DC (", yearRowsFiltered.length, "\uAC74)"))), /*#__PURE__*/React.createElement(FilterSection, {
     label: "\uC870\uD68C \uAE30\uAC04"
   }, /*#__PURE__*/React.createElement("div", {
     className: "flex items-center gap-3 flex-wrap"
@@ -8386,6 +8526,7 @@ function YnDot({
 function PnlView({
   managerial,
   year,
+  entity,
   allocConfig,
   headcount,
   sales,
@@ -8393,6 +8534,13 @@ function PnlView({
   setHeadcount
 }) {
   const [subTab, setSubTab] = useState("overview");
+
+  // ── 상단 entity 셀렉터를 글로벌 필터로 사용 (PnlView 자체 법인 필터 없음) ──
+  // 매핑: CONSOLIDATED("전체법인(연결)") → "전체" / 그 외 → 해당 법인명
+  const globalEntity = useMemo(() => {
+    if (!entity || entity === CONSOLIDATED) return "전체";
+    return entity;
+  }, [entity]);
 
   // ── 글로벌 필터 — 모든 서브탭 + 모든 카드가 공유 ──
   const allEntities = useMemo(() => {
@@ -8404,7 +8552,6 @@ function PnlView({
   const allMonths = useMemo(() => [...new Set((managerial || []).map(r => r.monthKey))].filter(Boolean).sort(), [managerial]);
   const minMonth = allMonths[0] || "";
   const maxMonth = allMonths[allMonths.length - 1] || "";
-  const [globalEntity, setGlobalEntity] = useState("전체");
   const [monthFrom, setMonthFrom] = useState("");
   const [monthTo, setMonthTo] = useState("");
   const [global구분, setGlobal구분] = useState("전체");
@@ -8521,23 +8668,6 @@ function PnlView({
     style: {
       color: COLOR.textMute
     }
-  }, "\uBC95\uC778"), /*#__PURE__*/React.createElement("select", {
-    value: globalEntity,
-    onChange: e => setGlobalEntity(e.target.value),
-    style: {
-      ...selectStyle,
-      minWidth: 180
-    }
-  }, /*#__PURE__*/React.createElement("option", {
-    value: "\uC804\uCCB4"
-  }, "\uC804\uCCB4 \uBC95\uC778 (", allEntities.length, "\uAC1C)"), allEntities.map(e => /*#__PURE__*/React.createElement("option", {
-    key: e,
-    value: e
-  }, e)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    className: "text-[10px] block mb-1",
-    style: {
-      color: COLOR.textMute
-    }
   }, "\uAE30\uAC04"), /*#__PURE__*/React.createElement("div", {
     className: "flex items-center gap-1"
   }, /*#__PURE__*/React.createElement("input", {
@@ -8578,7 +8708,7 @@ function PnlView({
     style: {
       color: COLOR.textMute
     }
-  }, "\uAD6C\uBD84 ", /*#__PURE__*/React.createElement("span", {
+  }, "\uB300\uBD84\uB958 ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: COLOR.textDim,
       marginLeft: 4
@@ -8610,7 +8740,7 @@ function PnlView({
     style: {
       color: COLOR.textMute
     }
-  }, "\uBD84\uB958\uD56D\uBAA9 ", /*#__PURE__*/React.createElement("span", {
+  }, "\uC911\uBD84\uB958 ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: COLOR.textDim,
       marginLeft: 4
@@ -8634,7 +8764,7 @@ function PnlView({
     style: {
       color: COLOR.textMute
     }
-  }, "\uACFC\uBAA9\uBA85 ", /*#__PURE__*/React.createElement("span", {
+  }, "\uACC4\uC815\uACFC\uBAA9 ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: COLOR.textDim,
       marginLeft: 4
@@ -8657,7 +8787,7 @@ function PnlView({
     style: {
       color: COLOR.textMute
     }
-  }, "\uACC4\uC815\uACFC\uBAA9 ", /*#__PURE__*/React.createElement("span", {
+  }, "\uACC4\uC815\uACFC\uBAA9_\uC138\uBAA9 ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: COLOR.textDim,
       marginLeft: 4
@@ -9833,25 +9963,16 @@ function OrdersView({
   };
   const downloadCsv = () => {
     const headers = showBoth ? ["타입", "법인명", "담당조직", "거래처", "프로젝트", "프로젝트코드", "변경상태", "변동구분", "건수", "기존계약금액", "변경계약금액", "최초계획", "변경계획", "실적", "잔여", "달성률(%)"] : ["타입", "법인명", "담당조직", "거래처", "프로젝트", "프로젝트코드", "변경상태", "변동구분", "건수", effectivePlanMode === "최초계획" ? "기존계약금액" : "변경계약금액", "계획", "실적", "잔여", "달성률(%)"];
-    const csv = [headers.join(",")];
-    detailRows.forEach(r => {
-      const base = [r.type === "group" ? "그룹" : "단건", r.entity, r.담당조직 || "", '"' + (r.거래처 || "").replace(/"/g, '""') + '"', '"' + (r.프로젝트명 || "").replace(/"/g, '""') + '"', r.프로젝트코드 || "", r.변경상태 || "", '"' + (r.변동구분 || "") + '"', r.count];
-      const tail = [Math.round(r.real), Math.round(r.잔여), r.달성률 != null ? r.달성률.toFixed(1) : ""];
+    const dataRows = detailRows.map(r => {
+      const base = [r.type === "group" ? "그룹" : "단건", r.entity, r.담당조직 || "", r.거래처 || "", r.프로젝트명 || "", r.프로젝트코드 || "", r.변경상태 || "", r.변동구분 || "", r.count];
+      const tail = [Math.round(r.real), Math.round(r.잔여), r.달성률 != null ? Number(r.달성률.toFixed(1)) : ""];
       if (showBoth) {
-        csv.push([...base, Math.round(r.기존계약 || 0), Math.round(r.변경계약 || 0), Math.round(r.최초plan || 0), Math.round(r.변경plan || 0), ...tail].join(","));
+        return [...base, Math.round(r.기존계약 || 0), Math.round(r.변경계약 || 0), Math.round(r.최초plan || 0), Math.round(r.변경plan || 0), ...tail];
       } else {
-        csv.push([...base, Math.round(r.계약금액 || 0), Math.round(r.plan), ...tail].join(","));
+        return [...base, Math.round(r.계약금액 || 0), Math.round(r.plan), ...tail];
       }
     });
-    const blob = new Blob(["\uFEFF" + csv.join("\n")], {
-      type: "text/csv;charset=utf-8;"
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `수주_${planMode}_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadExcel(`수주_${planMode}_${new Date().toISOString().slice(0, 10)}.xlsx`, headers, dataRows, `수주_${planMode}`);
   };
   const hasManagerial = managerial && managerial.length > 0;
 
@@ -10739,7 +10860,7 @@ function OrdersView({
       color: COLOR.gold,
       cursor: "pointer"
     }
-  }, "\u2B07 CSV"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u2B07 Excel"))), /*#__PURE__*/React.createElement("div", {
     className: "rounded-lg overflow-hidden",
     style: {
       border: `1px solid ${COLOR.border}`
@@ -11330,7 +11451,7 @@ function PnlOverview({
       color: COLOR.gold,
       cursor: "pointer"
     }
-  }, "\u2B07 CSV \uB2E4\uC6B4\uB85C\uB4DC")), /*#__PURE__*/React.createElement(PnlDetailTable, {
+  }, "\u2B07 Excel \uB2E4\uC6B4\uB85C\uB4DC")), /*#__PURE__*/React.createElement(PnlDetailTable, {
     rows: detailFiltered,
     showOrg: true
   })));
@@ -11651,7 +11772,7 @@ function PnlByOrgView({
       color: COLOR.gold,
       cursor: "pointer"
     }
-  }, "\u2B07 CSV \uB2E4\uC6B4\uB85C\uB4DC")), /*#__PURE__*/React.createElement(PnlMatrixTable, {
+  }, "\u2B07 Excel \uB2E4\uC6B4\uB85C\uB4DC")), /*#__PURE__*/React.createElement(PnlMatrixTable, {
     rows: orgPnls,
     totalRow: totalRow,
     dim: dim,
@@ -11689,7 +11810,7 @@ function PnlByOrgView({
       color: COLOR.gold,
       cursor: "pointer"
     }
-  }, "\u2B07 CSV"), /*#__PURE__*/React.createElement("button", {
+  }, "\u2B07 Excel"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setSelectedOrg(null),
     className: "px-3 py-1.5 rounded-lg text-xs font-medium",
     style: {
@@ -12179,28 +12300,10 @@ function PnlMatrixTable({
 }
 function downloadCsvPnlByOrg(rows, totalRow, dim) {
   const headers = [dim, "매출", "원가", "매출총이익", "총이익률(%)", "판관비", "영업이익", "영업이익률(%)", "영업외수익", "영업외비용", "당기순이익", "건수"];
-  const lines = [headers.join(",")];
-  const fmtPct = v => v == null ? "" : v.toFixed(2);
-  rows.forEach(r => {
-    lines.push([r.name, r.매출, r.원가, r.매출총이익, fmtPct(r.매출총이익률), r.판관비, r.영업이익, fmtPct(r.영업이익률), r.영업외수익, r.영업외비용, r.당기순이익, r.건수].map(c => {
-      const s = String(c == null ? "" : c);
-      return s.includes(",") || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s;
-    }).join(","));
-  });
-  // 합계 행
-  lines.push([totalRow.name, totalRow.매출, totalRow.원가, totalRow.매출총이익, fmtPct(totalRow.매출총이익률), totalRow.판관비, totalRow.영업이익, fmtPct(totalRow.영업이익률), totalRow.영업외수익, totalRow.영업외비용, totalRow.당기순이익, totalRow.건수].join(","));
-  const bom = "\uFEFF";
-  const blob = new Blob([bom + lines.join("\n")], {
-    type: "text/csv;charset=utf-8;"
-  });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${dim}별_손익_${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const fmtPct = v => v == null ? "" : Number(v.toFixed(2));
+  const dataRows = rows.map(r => [r.name, r.매출, r.원가, r.매출총이익, fmtPct(r.매출총이익률), r.판관비, r.영업이익, fmtPct(r.영업이익률), r.영업외수익, r.영업외비용, r.당기순이익, r.건수]);
+  dataRows.push([totalRow.name, totalRow.매출, totalRow.원가, totalRow.매출총이익, fmtPct(totalRow.매출총이익률), totalRow.판관비, totalRow.영업이익, fmtPct(totalRow.영업이익률), totalRow.영업외수익, totalRow.영업외비용, totalRow.당기순이익, totalRow.건수]);
+  downloadExcel(`${dim}별_손익_${new Date().toISOString().slice(0, 10)}.xlsx`, headers, dataRows, `${dim}별 손익`);
 }
 function BreakdownTable({
   data,
@@ -12725,27 +12828,10 @@ function PnlDetailTable({
   }, "\uB2E4\uC74C \u2192")));
 }
 function downloadCsvManagerial(rows) {
-  const headers = ["일자", "법인", "구분", "분류항목", "과목명", "계정과목", "거래처", "부서", "프로젝트", "적요", "금액"];
-  const csv = [headers.join(",")];
-  rows.forEach(r => {
-    const row = [r.date, r.entity, r.구분, r.분류항목, r.과목명, r.계정과목, r.거래처, r.부서, r.프로젝트, r.적요, r.amount];
-    csv.push(row.map(c => {
-      const s = String(c == null ? "" : c);
-      return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
-    }).join(","));
-  });
-  const bom = "\uFEFF";
-  const blob = new Blob([bom + csv.join("\n")], {
-    type: "text/csv;charset=utf-8;"
-  });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `관리손익_${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  // 새 명칭 적용: 구분→대분류, 분류항목→중분류, 과목명→계정과목, 계정과목→계정과목_세목
+  const headers = ["일자", "법인", "대분류", "중분류", "계정과목", "계정과목_세목", "거래처", "부서", "프로젝트", "적요", "금액"];
+  const dataRows = rows.map(r => [r.date, r.entity, r.구분, r.분류항목, r.과목명, r.계정과목, r.거래처, r.부서, r.프로젝트, r.적요, r.amount]);
+  downloadExcel(`관리손익_${new Date().toISOString().slice(0, 10)}.xlsx`, headers, dataRows, "관리손익");
 }
 
 /* ══════════ Import ══════════ */
