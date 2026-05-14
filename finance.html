@@ -8628,15 +8628,7 @@ function PnlView({
   const allMonths = useMemo(() => [...new Set((managerial || []).map(r => r.monthKey))].filter(Boolean).sort(), [managerial]);
   const minMonth = allMonths[0] || "";
   const maxMonth = allMonths[allMonths.length - 1] || "";
-  // 글로벌 필터: pending(사용자 입력 중) vs applied(조회 버튼 누른 후 실제 적용)
-  // 셀렉트 박스/날짜는 pending에 바인딩, useMemo는 applied 사용
-  const [pendingMonthFrom, setPendingMonthFrom] = useState("");
-  const [pendingMonthTo, setPendingMonthTo] = useState("");
-  const [pending구분, setPending구분] = useState("전체");
-  const [pending분류항목, setPending분류항목] = useState("전체");
-  const [pending과목명, setPending과목명] = useState("전체");
-  const [pending계정과목, setPending계정과목] = useState("전체");
-  // 적용된 값 (조회 버튼 클릭 시 pending → applied 복사)
+  // 글로벌 필터 (즉시 반영)
   const [monthFrom, setMonthFrom] = useState("");
   const [monthTo, setMonthTo] = useState("");
   const [global구분, setGlobal구분] = useState("전체");
@@ -8644,48 +8636,10 @@ function PnlView({
   const [global과목명, setGlobal과목명] = useState("전체");
   const [global계정과목, setGlobal계정과목] = useState("전체");
 
-  // 변경사항 있는지 (미적용 표시용)
-  const hasPendingChanges =
-    pendingMonthFrom !== monthFrom ||
-    pendingMonthTo !== monthTo ||
-    pending구분 !== global구분 ||
-    pending분류항목 !== global분류항목 ||
-    pending과목명 !== global과목명 ||
-    pending계정과목 !== global계정과목;
-
-  const applyFilters = () => {
-    setMonthFrom(pendingMonthFrom);
-    setMonthTo(pendingMonthTo);
-    setGlobal구분(pending구분);
-    setGlobal분류항목(pending분류항목);
-    setGlobal과목명(pending과목명);
-    setGlobal계정과목(pending계정과목);
-  };
-  const resetFilters = () => {
-    setPendingMonthFrom(minMonth);
-    setPendingMonthTo(maxMonth);
-    setPending구분("전체");
-    setPending분류항목("전체");
-    setPending과목명("전체");
-    setPending계정과목("전체");
-    setMonthFrom(minMonth);
-    setMonthTo(maxMonth);
-    setGlobal구분("전체");
-    setGlobal분류항목("전체");
-    setGlobal과목명("전체");
-    setGlobal계정과목("전체");
-  };
-
   useEffect(() => {
     if (allMonths.length > 0) {
-      if (!monthFrom) {
-        setMonthFrom(minMonth);
-        setPendingMonthFrom(minMonth);
-      }
-      if (!monthTo) {
-        setMonthTo(maxMonth);
-        setPendingMonthTo(maxMonth);
-      }
+      if (!monthFrom) setMonthFrom(minMonth);
+      if (!monthTo) setMonthTo(maxMonth);
     }
   }, [allMonths.length, minMonth, maxMonth]);
   if (!managerial || managerial.length === 0) {
@@ -8741,26 +8695,26 @@ function PnlView({
 
   // 분류항목 목록 (pending 구분 적용 후 — 사용자가 셀렉트로 즉시 좁혀볼 수 있게)
   const 분류항목List = useMemo(() => {
-    const filtered = pending구분 === "전체" ? baseFiltered : baseFiltered.filter(r => r.구분 === pending구분);
+    const filtered = global구분 === "전체" ? baseFiltered : baseFiltered.filter(r => r.구분 === global구분);
     return [...new Set(filtered.map(r => r.분류항목 || "(미지정)"))].sort();
-  }, [baseFiltered, pending구분]);
+  }, [baseFiltered, global구분]);
 
   // 과목명 목록 (pending 구분 + 분류항목 적용 후)
   const 과목명List = useMemo(() => {
     let f = baseFiltered;
-    if (pending구분 !== "전체") f = f.filter(r => r.구분 === pending구분);
-    if (pending분류항목 !== "전체") f = f.filter(r => (r.분류항목 || "(미지정)") === pending분류항목);
+    if (global구분 !== "전체") f = f.filter(r => r.구분 === global구분);
+    if (global분류항목 !== "전체") f = f.filter(r => (r.분류항목 || "(미지정)") === global분류항목);
     return [...new Set(f.map(r => r.과목명 || "(미지정)"))].filter(x => x !== "(미지정)" || f.some(r => !r.과목명)).sort();
-  }, [baseFiltered, pending구분, pending분류항목]);
+  }, [baseFiltered, global구분, global분류항목]);
 
   // 계정과목 목록 (pending 구분 + 분류항목 + 과목명 적용 후)
   const 계정과목List = useMemo(() => {
     let f = baseFiltered;
-    if (pending구분 !== "전체") f = f.filter(r => r.구분 === pending구분);
-    if (pending분류항목 !== "전체") f = f.filter(r => (r.분류항목 || "(미지정)") === pending분류항목);
-    if (pending과목명 !== "전체") f = f.filter(r => (r.과목명 || "(미지정)") === pending과목명);
+    if (global구분 !== "전체") f = f.filter(r => r.구분 === global구분);
+    if (global분류항목 !== "전체") f = f.filter(r => (r.분류항목 || "(미지정)") === global분류항목);
+    if (global과목명 !== "전체") f = f.filter(r => (r.과목명 || "(미지정)") === global과목명);
     return [...new Set(f.map(r => r.계정과목 || "(미지정)"))].filter(x => x !== "(미지정)" || f.some(r => !r.계정과목)).sort();
-  }, [baseFiltered, pending구분, pending분류항목, pending과목명]);
+  }, [baseFiltered, global구분, global분류항목, global과목명]);
   const hasDept = useMemo(() => managerial.some(r => r.부서), [managerial]);
   const hasProj = useMemo(() => managerial.some(r => r.프로젝트), [managerial]);
   const detailOnlyActive = global구분 !== "전체" || global분류항목 !== "전체" || global과목명 !== "전체" || global계정과목 !== "전체";
@@ -8796,10 +8750,10 @@ function PnlView({
     className: "flex items-center gap-1"
   }, /*#__PURE__*/React.createElement("input", {
     type: "month",
-    value: pendingMonthFrom,
+    value: monthFrom,
     min: minMonth,
     max: maxMonth,
-    onChange: e => setPendingMonthFrom(e.target.value),
+    onChange: e => setMonthFrom(e.target.value),
     style: inputStyle
   }), /*#__PURE__*/React.createElement("span", {
     style: {
@@ -8808,10 +8762,10 @@ function PnlView({
     }
   }, "~"), /*#__PURE__*/React.createElement("input", {
     type: "month",
-    value: pendingMonthTo,
+    value: monthTo,
     min: minMonth,
     max: maxMonth,
-    onChange: e => setPendingMonthTo(e.target.value),
+    onChange: e => setMonthTo(e.target.value),
     style: inputStyle
   }))), /*#__PURE__*/React.createElement("span", {
     className: "text-[10px] flex-1 text-right",
@@ -8838,12 +8792,12 @@ function PnlView({
       marginLeft: 4
     }
   }, "(C\uC5F4)")), /*#__PURE__*/React.createElement("select", {
-    value: pending구분,
+    value: global구분,
     onChange: e => {
-      setPending구분(e.target.value);
-      setPending분류항목("전체");
-      setPending과목명("전체");
-      setPending계정과목("전체");
+      setGlobal구분(e.target.value);
+      setGlobal분류항목("전체");
+      setGlobal과목명("전체");
+      setGlobal계정과목("전체");
     },
     style: selectStyle,
     className: "w-full"
@@ -8870,11 +8824,11 @@ function PnlView({
       marginLeft: 4
     }
   }, "(D\uC5F4)")), /*#__PURE__*/React.createElement("select", {
-    value: pending분류항목,
+    value: global분류항목,
     onChange: e => {
-      setPending분류항목(e.target.value);
-      setPending과목명("전체");
-      setPending계정과목("전체");
+      setGlobal분류항목(e.target.value);
+      setGlobal과목명("전체");
+      setGlobal계정과목("전체");
     },
     style: selectStyle,
     className: "w-full"
@@ -8894,10 +8848,10 @@ function PnlView({
       marginLeft: 4
     }
   }, "(G\uC5F4)")), /*#__PURE__*/React.createElement("select", {
-    value: pending과목명,
+    value: global과목명,
     onChange: e => {
-      setPending과목명(e.target.value);
-      setPending계정과목("전체");
+      setGlobal과목명(e.target.value);
+      setGlobal계정과목("전체");
     },
     style: selectStyle,
     className: "w-full"
@@ -8917,8 +8871,8 @@ function PnlView({
       marginLeft: 4
     }
   }, "(H\uC5F4)")), /*#__PURE__*/React.createElement("select", {
-    value: pending계정과목,
-    onChange: e => setPending계정과목(e.target.value),
+    value: global계정과목,
+    onChange: e => setGlobal계정과목(e.target.value),
     style: selectStyle,
     className: "w-full"
   }, /*#__PURE__*/React.createElement("option", {
@@ -8926,41 +8880,7 @@ function PnlView({
   }, "\uC804\uCCB4 (", 계정과목List.length, "\uAC1C)"), 계정과목List.map(a => /*#__PURE__*/React.createElement("option", {
     key: a,
     value: a
-  }, a))))),
-  /* 조회/초기화 버튼 */
-  /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center gap-2 pt-3 mt-1",
-    style: { borderTop: `1px dashed ${COLOR.gold}20` }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: applyFilters,
-    disabled: !hasPendingChanges,
-    style: {
-      padding: "6px 18px",
-      fontSize: 12,
-      fontWeight: 600,
-      borderRadius: 6,
-      border: "none",
-      background: hasPendingChanges ? COLOR.gold : COLOR.surfaceEl,
-      color: hasPendingChanges ? "#fff" : COLOR.textMute,
-      cursor: hasPendingChanges ? "pointer" : "not-allowed",
-      transition: "all .15s"
-    }
-  }, "\uD83D\uDD0E \uC870\uD68C"), /*#__PURE__*/React.createElement("button", {
-    onClick: resetFilters,
-    style: {
-      padding: "6px 14px",
-      fontSize: 12,
-      fontWeight: 500,
-      borderRadius: 6,
-      border: `1px solid ${COLOR.border}`,
-      background: "transparent",
-      color: COLOR.textDim,
-      cursor: "pointer"
-    }
-  }, "\uCD08\uAE30\uD654"), hasPendingChanges && /*#__PURE__*/React.createElement("span", {
-    className: "text-[10px]",
-    style: { color: COLOR.warn, marginLeft: 4 }
-  }, "\u26A0 \uBCC0\uACBD\uB41C \uD544\uD130 \uC788\uC74C \u2014 \uC870\uD68C \ubc84\ud2bc\uc744 \ub20c\ub7ec \uc801\uc6a9\ud558\uc138\uc694")), detailOnlyActive && /*#__PURE__*/React.createElement("div", {
+  }, a))))), detailOnlyActive && /*#__PURE__*/React.createElement("div", {
     className: "mt-2 flex items-center gap-2 text-[10px]",
     style: {
       color: COLOR.textDim
@@ -9029,7 +8949,46 @@ function PnlView({
     monthFrom: monthFrom,
     monthTo: monthTo,
     periodLabel: `${monthFrom}~${monthTo}`
-  }));
+  }),
+  /* 상세 필터(대분류/중분류/계정과목/계정과목_세목) 활성 시 어느 서브탭에서든 하단에 상세 거래내역 표시
+     단, '전체 손익분석' 서브탭은 자체 상세 내역 카드가 이미 있으니 중복 방지 */
+  detailOnlyActive && subTab !== "overview" && /*#__PURE__*/React.createElement(Card, {
+    className: "p-5",
+    style: {
+      background: `${COLOR.gold}06`,
+      borderColor: `${COLOR.gold}40`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center justify-between mb-3 flex-wrap gap-2"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "text-xs uppercase tracking-wider",
+    style: { color: COLOR.gold, letterSpacing: "0.12em", fontWeight: 700 }
+  }, "\u25B8 \uC0C1\uC138 \uAC70\uB798\uB0B4\uC5ED \u2014 \uAE00\ub85c\ubc8c \ud544\ud130 \uc801\uc6a9"), /*#__PURE__*/React.createElement("div", {
+    className: "text-[11px] mt-1",
+    style: { color: COLOR.textDim }
+  }, [global구분 !== "전체" && `대분류: ${global구분}`,
+       global분류항목 !== "전체" && `중분류: ${global분류항목}`,
+       global과목명 !== "전체" && `계정과목: ${global과목명}`,
+       global계정과목 !== "전체" && `세목: ${global계정과목}`].filter(Boolean).join(" · ")),
+  /*#__PURE__*/React.createElement("div", {
+    className: "text-[11px] mt-0.5",
+    style: { color: COLOR.textDim }
+  }, detailFiltered.length.toLocaleString(), "\uAC74 \xB7 \uD569\uACC4 ", /*#__PURE__*/React.createElement("b", {
+    style: { color: COLOR.text, fontFamily: MONO }
+  }, Math.round(detailFiltered.reduce((s, r) => s + r.amount, 0)).toLocaleString(), "\uC6D0"))),
+  /*#__PURE__*/React.createElement("button", {
+    onClick: () => downloadCsvManagerial(detailFiltered),
+    className: "px-3 py-1.5 rounded-lg text-xs font-medium",
+    style: {
+      background: `${COLOR.gold}15`,
+      border: `1px solid ${COLOR.gold}40`,
+      color: COLOR.gold,
+      cursor: "pointer"
+    }
+  }, "\u2B07 Excel \uB2E4\uC6B4\uB85C\uB4DC")), /*#__PURE__*/React.createElement(PnlDetailTable, {
+    rows: detailFiltered,
+    showOrg: true
+  })));
 }
 function SubTab({
   active,
