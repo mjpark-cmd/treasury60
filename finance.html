@@ -8628,16 +8628,64 @@ function PnlView({
   const allMonths = useMemo(() => [...new Set((managerial || []).map(r => r.monthKey))].filter(Boolean).sort(), [managerial]);
   const minMonth = allMonths[0] || "";
   const maxMonth = allMonths[allMonths.length - 1] || "";
+  // 글로벌 필터: pending(사용자 입력 중) vs applied(조회 버튼 누른 후 실제 적용)
+  // 셀렉트 박스/날짜는 pending에 바인딩, useMemo는 applied 사용
+  const [pendingMonthFrom, setPendingMonthFrom] = useState("");
+  const [pendingMonthTo, setPendingMonthTo] = useState("");
+  const [pending구분, setPending구분] = useState("전체");
+  const [pending분류항목, setPending분류항목] = useState("전체");
+  const [pending과목명, setPending과목명] = useState("전체");
+  const [pending계정과목, setPending계정과목] = useState("전체");
+  // 적용된 값 (조회 버튼 클릭 시 pending → applied 복사)
   const [monthFrom, setMonthFrom] = useState("");
   const [monthTo, setMonthTo] = useState("");
   const [global구분, setGlobal구분] = useState("전체");
   const [global분류항목, setGlobal분류항목] = useState("전체");
   const [global과목명, setGlobal과목명] = useState("전체");
   const [global계정과목, setGlobal계정과목] = useState("전체");
+
+  // 변경사항 있는지 (미적용 표시용)
+  const hasPendingChanges =
+    pendingMonthFrom !== monthFrom ||
+    pendingMonthTo !== monthTo ||
+    pending구분 !== global구분 ||
+    pending분류항목 !== global분류항목 ||
+    pending과목명 !== global과목명 ||
+    pending계정과목 !== global계정과목;
+
+  const applyFilters = () => {
+    setMonthFrom(pendingMonthFrom);
+    setMonthTo(pendingMonthTo);
+    setGlobal구분(pending구분);
+    setGlobal분류항목(pending분류항목);
+    setGlobal과목명(pending과목명);
+    setGlobal계정과목(pending계정과목);
+  };
+  const resetFilters = () => {
+    setPendingMonthFrom(minMonth);
+    setPendingMonthTo(maxMonth);
+    setPending구분("전체");
+    setPending분류항목("전체");
+    setPending과목명("전체");
+    setPending계정과목("전체");
+    setMonthFrom(minMonth);
+    setMonthTo(maxMonth);
+    setGlobal구분("전체");
+    setGlobal분류항목("전체");
+    setGlobal과목명("전체");
+    setGlobal계정과목("전체");
+  };
+
   useEffect(() => {
     if (allMonths.length > 0) {
-      if (!monthFrom) setMonthFrom(minMonth);
-      if (!monthTo) setMonthTo(maxMonth);
+      if (!monthFrom) {
+        setMonthFrom(minMonth);
+        setPendingMonthFrom(minMonth);
+      }
+      if (!monthTo) {
+        setMonthTo(maxMonth);
+        setPendingMonthTo(maxMonth);
+      }
     }
   }, [allMonths.length, minMonth, maxMonth]);
   if (!managerial || managerial.length === 0) {
@@ -8691,28 +8739,28 @@ function PnlView({
     });
   }, [baseFiltered, global구분, global분류항목, global과목명, global계정과목]);
 
-  // 분류항목 목록 (구분 필터 적용 후)
+  // 분류항목 목록 (pending 구분 적용 후 — 사용자가 셀렉트로 즉시 좁혀볼 수 있게)
   const 분류항목List = useMemo(() => {
-    const filtered = global구분 === "전체" ? baseFiltered : baseFiltered.filter(r => r.구분 === global구분);
+    const filtered = pending구분 === "전체" ? baseFiltered : baseFiltered.filter(r => r.구분 === pending구분);
     return [...new Set(filtered.map(r => r.분류항목 || "(미지정)"))].sort();
-  }, [baseFiltered, global구분]);
+  }, [baseFiltered, pending구분]);
 
-  // 과목명 목록 (구분 + 분류항목 적용 후)
+  // 과목명 목록 (pending 구분 + 분류항목 적용 후)
   const 과목명List = useMemo(() => {
     let f = baseFiltered;
-    if (global구분 !== "전체") f = f.filter(r => r.구분 === global구분);
-    if (global분류항목 !== "전체") f = f.filter(r => (r.분류항목 || "(미지정)") === global분류항목);
+    if (pending구분 !== "전체") f = f.filter(r => r.구분 === pending구분);
+    if (pending분류항목 !== "전체") f = f.filter(r => (r.분류항목 || "(미지정)") === pending분류항목);
     return [...new Set(f.map(r => r.과목명 || "(미지정)"))].filter(x => x !== "(미지정)" || f.some(r => !r.과목명)).sort();
-  }, [baseFiltered, global구분, global분류항목]);
+  }, [baseFiltered, pending구분, pending분류항목]);
 
-  // 계정과목 목록 (구분 + 분류항목 + 과목명 적용 후)
+  // 계정과목 목록 (pending 구분 + 분류항목 + 과목명 적용 후)
   const 계정과목List = useMemo(() => {
     let f = baseFiltered;
-    if (global구분 !== "전체") f = f.filter(r => r.구분 === global구분);
-    if (global분류항목 !== "전체") f = f.filter(r => (r.분류항목 || "(미지정)") === global분류항목);
-    if (global과목명 !== "전체") f = f.filter(r => (r.과목명 || "(미지정)") === global과목명);
+    if (pending구분 !== "전체") f = f.filter(r => r.구분 === pending구분);
+    if (pending분류항목 !== "전체") f = f.filter(r => (r.분류항목 || "(미지정)") === pending분류항목);
+    if (pending과목명 !== "전체") f = f.filter(r => (r.과목명 || "(미지정)") === pending과목명);
     return [...new Set(f.map(r => r.계정과목 || "(미지정)"))].filter(x => x !== "(미지정)" || f.some(r => !r.계정과목)).sort();
-  }, [baseFiltered, global구분, global분류항목, global과목명]);
+  }, [baseFiltered, pending구분, pending분류항목, pending과목명]);
   const hasDept = useMemo(() => managerial.some(r => r.부서), [managerial]);
   const hasProj = useMemo(() => managerial.some(r => r.프로젝트), [managerial]);
   const detailOnlyActive = global구분 !== "전체" || global분류항목 !== "전체" || global과목명 !== "전체" || global계정과목 !== "전체";
@@ -8748,10 +8796,10 @@ function PnlView({
     className: "flex items-center gap-1"
   }, /*#__PURE__*/React.createElement("input", {
     type: "month",
-    value: monthFrom,
+    value: pendingMonthFrom,
     min: minMonth,
     max: maxMonth,
-    onChange: e => setMonthFrom(e.target.value),
+    onChange: e => setPendingMonthFrom(e.target.value),
     style: inputStyle
   }), /*#__PURE__*/React.createElement("span", {
     style: {
@@ -8760,10 +8808,10 @@ function PnlView({
     }
   }, "~"), /*#__PURE__*/React.createElement("input", {
     type: "month",
-    value: monthTo,
+    value: pendingMonthTo,
     min: minMonth,
     max: maxMonth,
-    onChange: e => setMonthTo(e.target.value),
+    onChange: e => setPendingMonthTo(e.target.value),
     style: inputStyle
   }))), /*#__PURE__*/React.createElement("span", {
     className: "text-[10px] flex-1 text-right",
@@ -8790,12 +8838,12 @@ function PnlView({
       marginLeft: 4
     }
   }, "(C\uC5F4)")), /*#__PURE__*/React.createElement("select", {
-    value: global구분,
+    value: pending구분,
     onChange: e => {
-      setGlobal구분(e.target.value);
-      setGlobal분류항목("전체");
-      setGlobal과목명("전체");
-      setGlobal계정과목("전체");
+      setPending구분(e.target.value);
+      setPending분류항목("전체");
+      setPending과목명("전체");
+      setPending계정과목("전체");
     },
     style: selectStyle,
     className: "w-full"
@@ -8822,11 +8870,11 @@ function PnlView({
       marginLeft: 4
     }
   }, "(D\uC5F4)")), /*#__PURE__*/React.createElement("select", {
-    value: global분류항목,
+    value: pending분류항목,
     onChange: e => {
-      setGlobal분류항목(e.target.value);
-      setGlobal과목명("전체");
-      setGlobal계정과목("전체");
+      setPending분류항목(e.target.value);
+      setPending과목명("전체");
+      setPending계정과목("전체");
     },
     style: selectStyle,
     className: "w-full"
@@ -8846,10 +8894,10 @@ function PnlView({
       marginLeft: 4
     }
   }, "(G\uC5F4)")), /*#__PURE__*/React.createElement("select", {
-    value: global과목명,
+    value: pending과목명,
     onChange: e => {
-      setGlobal과목명(e.target.value);
-      setGlobal계정과목("전체");
+      setPending과목명(e.target.value);
+      setPending계정과목("전체");
     },
     style: selectStyle,
     className: "w-full"
@@ -8869,8 +8917,8 @@ function PnlView({
       marginLeft: 4
     }
   }, "(H\uC5F4)")), /*#__PURE__*/React.createElement("select", {
-    value: global계정과목,
-    onChange: e => setGlobal계정과목(e.target.value),
+    value: pending계정과목,
+    onChange: e => setPending계정과목(e.target.value),
     style: selectStyle,
     className: "w-full"
   }, /*#__PURE__*/React.createElement("option", {
@@ -8878,7 +8926,41 @@ function PnlView({
   }, "\uC804\uCCB4 (", 계정과목List.length, "\uAC1C)"), 계정과목List.map(a => /*#__PURE__*/React.createElement("option", {
     key: a,
     value: a
-  }, a))))), detailOnlyActive && /*#__PURE__*/React.createElement("div", {
+  }, a))))),
+  /* 조회/초기화 버튼 */
+  /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-2 pt-3 mt-1",
+    style: { borderTop: `1px dashed ${COLOR.gold}20` }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: applyFilters,
+    disabled: !hasPendingChanges,
+    style: {
+      padding: "6px 18px",
+      fontSize: 12,
+      fontWeight: 600,
+      borderRadius: 6,
+      border: "none",
+      background: hasPendingChanges ? COLOR.gold : COLOR.surfaceEl,
+      color: hasPendingChanges ? "#fff" : COLOR.textMute,
+      cursor: hasPendingChanges ? "pointer" : "not-allowed",
+      transition: "all .15s"
+    }
+  }, "\uD83D\uDD0E \uC870\uD68C"), /*#__PURE__*/React.createElement("button", {
+    onClick: resetFilters,
+    style: {
+      padding: "6px 14px",
+      fontSize: 12,
+      fontWeight: 500,
+      borderRadius: 6,
+      border: `1px solid ${COLOR.border}`,
+      background: "transparent",
+      color: COLOR.textDim,
+      cursor: "pointer"
+    }
+  }, "\uCD08\uAE30\uD654"), hasPendingChanges && /*#__PURE__*/React.createElement("span", {
+    className: "text-[10px]",
+    style: { color: COLOR.warn, marginLeft: 4 }
+  }, "\u26A0 \uBCC0\uACBD\uB41C \uD544\uD130 \uC788\uC74C \u2014 \uC870\uD68C \ubc84\ud2bc\uc744 \ub20c\ub7ec \uc801\uc6a9\ud558\uc138\uc694")), detailOnlyActive && /*#__PURE__*/React.createElement("div", {
     className: "mt-2 flex items-center gap-2 text-[10px]",
     style: {
       color: COLOR.textDim
@@ -9044,6 +9126,18 @@ function PnlAllocationView({
     const allocDetail = []; // 배부 명세 표용
     const commonByAccount = {}; // 계정×공통부서별 합계 (요약 표시용)
     let unmappedSum = 0; // 식스티 데이터인데 부서 매핑도 안 되고 공통도 아닌 것
+    const unmappedDetails = {}; // 디버그용: 부서명×계정과목별 미매핑 누적
+    const recordUnmapped = (r, reason) => {
+      unmappedSum += r.amount;
+      const dept = String(r.부서 || "").trim() || "(빈 부서)";
+      const account = r.계정과목 || "(미지정)";
+      const key = `${dept}||${account}`;
+      if (!unmappedDetails[key]) {
+        unmappedDetails[key] = { 부서: dept, 계정과목: account, 금액: 0, 건수: 0, 이유: reason };
+      }
+      unmappedDetails[key].금액 += r.amount;
+      unmappedDetails[key].건수 += 1;
+    };
 
     baseFiltered.forEach(r => {
       const cat = r.구분 || "";
@@ -9089,7 +9183,7 @@ function PnlAllocationView({
 
         if (targets.length === 0) {
           // 대상 조직 없음 — 미배부로 누적
-          unmappedSum += r.amount;
+          recordUnmapped(r, "공통부서지만 대상 조직 없음 (인원현황/배부설정 매핑 확인)");
           return;
         }
 
@@ -9132,7 +9226,7 @@ function PnlAllocationView({
         else if (cat === "영업외비용") direct[unit].영업외비용 += r.amount;
       } else if (r.entity === "식스티헤르츠") {
         // 식스티인데 부서 매핑 안 되고 공통도 아님
-        unmappedSum += r.amount;
+        recordUnmapped(r, "식스티헤르츠인데 부서가 xEMS/Gridflex/ER 패턴도 아니고 공통부서도 아님");
       }
     });
 
@@ -9178,6 +9272,7 @@ function PnlAllocationView({
     return [{
       units, allocDetail,
       commonByAccount: Object.values(commonByAccount).sort((a, b) => b.금액 - a.금액),
+      unmappedDetails: Object.values(unmappedDetails).sort((a, b) => Math.abs(b.금액) - Math.abs(a.금액)),
     }, totals];
   }, [managerial, baseFiltered, allocConfig, headcount, monthFrom, monthTo]);
 
@@ -9376,7 +9471,59 @@ function PnlAllocationView({
       color: COLOR.textMute,
       marginLeft: 6
     }
-  }, "\u2192 \uC5B4\uB514\uC5D0\uB3C4 \uBC18\uC601 \uC548 \uB428"))), allocResult && /*#__PURE__*/React.createElement(Card, {
+  }, "\u2192 \uC5B4\uB514\uC5D0\uB3C4 \uBC18\uC601 \uC548 \uB428"))),
+  /* 미매핑 디버그 표 — 무엇이 미매핑인지 사용자가 즉시 확인 가능 */
+  allocResult && allocResult.unmappedDetails && allocResult.unmappedDetails.length > 0 && /*#__PURE__*/React.createElement(Card, {
+    className: "p-5",
+    style: {
+      background: `${COLOR.warn}06`,
+      borderColor: `${COLOR.warn}40`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-xs uppercase tracking-wider mb-2 flex items-center gap-2",
+    style: { color: COLOR.warn, letterSpacing: "0.12em" }
+  }, "\u26A0 \uBBF8\uBC18\uC601 \uB370\uC774\uD130 \uC0C1\uC138 (", allocResult.unmappedDetails.length, "\uAC74)"), /*#__PURE__*/React.createElement("div", {
+    className: "text-[11px] mb-3",
+    style: { color: COLOR.textDim, lineHeight: 1.6 }
+  }, "\uC544\ub798 \ud589\ub4e4\uc774 \uc870\uc9c1\u00b7\ubc30\ubd80 \uc5b4\ub514\uc5d0\ub3c4 \uc7a1\ud788\uc9c0 \uc54a\uc558\uc2b5\ub2c8\ub2e4. \ubd80\uc11c\uba85\uc744 \ud655\uc778\ud558\uc5ec ",
+    /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "\uacf5\ud1b5\ubd80\uc11c"),
+    "\ub77c\uba74 Master_\uc778\uc6d0\ud604\ud669 \ud5e4\ub354\uc640 \uc77c\uce58\uc2dc\ud0a4\uace0, ",
+    /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "\uc9c1\uc811\uc870\uc9c1"),
+    "\uc774\ub77c\uba74 xEMS/Gridflex/ER \uc911 \ud558\ub098\uc758 \uc774\ub984\uc73c\ub85c \uc218\uc815\ud558\uc138\uc694."),
+  /*#__PURE__*/React.createElement("div", {
+    className: "rounded-lg overflow-hidden",
+    style: { border: `1px solid ${COLOR.warn}30` }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "overflow-auto",
+    style: { maxHeight: 320 }
+  }, /*#__PURE__*/React.createElement("table", {
+    className: "w-full text-[11px]",
+    style: { borderCollapse: "collapse" }
+  }, /*#__PURE__*/React.createElement("thead", {
+    style: { position: "sticky", top: 0, background: `${COLOR.warn}10`, zIndex: 1 }
+  }, /*#__PURE__*/React.createElement("tr", {
+    style: { borderBottom: `1px solid ${COLOR.warn}40` }
+  }, /*#__PURE__*/React.createElement("th", { style: thStyle }, "\ubd80\uc11c\uba85"),
+    /*#__PURE__*/React.createElement("th", { style: thStyle }, "\uacc4\uc815\uacfc\ubaa9"),
+    /*#__PURE__*/React.createElement("th", { style: { ...thStyle, textAlign: "right" } }, "\uae08\uc561"),
+    /*#__PURE__*/React.createElement("th", { style: { ...thStyle, textAlign: "center" } }, "\uac74\uc218"),
+    /*#__PURE__*/React.createElement("th", { style: thStyle }, "\uc774\uc720"))),
+  /*#__PURE__*/React.createElement("tbody", null, allocResult.unmappedDetails.map((d, k) => /*#__PURE__*/React.createElement("tr", {
+    key: k,
+    style: { borderBottom: `1px dashed ${COLOR.border}` }
+  }, /*#__PURE__*/React.createElement("td", {
+    style: { ...tdStyle, fontFamily: MONO, color: COLOR.danger, fontWeight: 500 }
+  }, d.부서),
+    /*#__PURE__*/React.createElement("td", { style: tdStyle }, d.계정과목),
+    /*#__PURE__*/React.createElement("td", {
+      style: { ...tdStyle, textAlign: "right", fontFamily: MONO, color: COLOR.warn, fontWeight: 500 }
+    }, Math.round(d.금액).toLocaleString()),
+    /*#__PURE__*/React.createElement("td", {
+      style: { ...tdStyle, textAlign: "center", fontFamily: MONO, color: COLOR.textMute }
+    }, d.건수),
+    /*#__PURE__*/React.createElement("td", {
+      style: { ...tdStyle, fontSize: 10, color: COLOR.textDim }
+    }, d.이유)))))))), allocResult && /*#__PURE__*/React.createElement(Card, {
     className: "p-5"
   }, /*#__PURE__*/React.createElement("div", {
     className: "text-xs uppercase tracking-wider mb-3",
