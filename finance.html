@@ -8645,6 +8645,15 @@ function PnlView({
       if (!monthTo) setMonthTo(maxMonth);
     }
   }, [allMonths.length, minMonth, maxMonth]);
+
+  // 서브탭 변경 시 분류/부서 필터 초기화 (기간은 유지)
+  useEffect(() => {
+    setGlobal부서("전체");
+    setGlobal구분("전체");
+    setGlobal분류항목("전체");
+    setGlobal과목명("전체");
+    setGlobal계정과목("전체");
+  }, [subTab]);
   if (!managerial || managerial.length === 0) {
     return /*#__PURE__*/React.createElement(Card, {
       className: "p-8 text-center",
@@ -8678,7 +8687,15 @@ function PnlView({
   // ── 1단계: 법인 + 기간 필터 (P&L 합계 산출용 — 구분/분류항목/과목명 무관) ──
   const baseFiltered = useMemo(() => {
     return managerial.filter(r => {
-      if (globalEntity !== "전체" && r.entity !== globalEntity) return false;
+      // entity 필터:
+      //   "전체" (= 상단에서 전체법인(연결) 선택) → 연결 entity 행은 제외 (가공치, 거래단위 손익에 부적합)
+      //     5개 개별 법인의 거래 행만 합산 → 부서별 P&L에 정상 반영
+      //   특정 법인 → 그 법인 행만
+      if (globalEntity === "전체") {
+        if (r.entity === CONSOLIDATED) return false;
+      } else if (r.entity !== globalEntity) {
+        return false;
+      }
       if (monthFrom && r.monthKey < monthFrom) return false;
       if (monthTo && r.monthKey > monthTo) return false;
       return true;
@@ -8697,7 +8714,14 @@ function PnlView({
     });
   }, [baseFiltered, global구분, global분류항목, global과목명, global계정과목]);
 
-  // 부서별 P&L 전용 — detailFiltered + 부서 필터까지
+  // 부서별 P&L 표 전용 — baseFiltered + 부서 필터만 (분류 필터는 영향 X)
+  // → 사용자가 중분류=인건비 선택해도 상단 표는 전체 손익 그대로, 하단 상세만 좁아짐
+  const deptTableFiltered = useMemo(() => {
+    if (global부서 === "전체") return baseFiltered;
+    return baseFiltered.filter(r => (r.부서 || "(미지정)") === global부서);
+  }, [baseFiltered, global부서]);
+
+  // 부서별 P&L 하단 상세 — detailFiltered + 부서 필터
   const departmentFiltered = useMemo(() => {
     if (global부서 === "전체") return detailFiltered;
     return detailFiltered.filter(r => (r.부서 || "(미지정)") === global부서);
@@ -8974,7 +8998,7 @@ function PnlView({
     global과목명: global과목명,
     global계정과목: global계정과목
   }), subTab === "department" && /*#__PURE__*/React.createElement(PnlByOrgView, {
-    filtered: departmentFiltered,
+    filtered: deptTableFiltered,
     dim: "\uBD80\uC11C",
     entityLabel: globalEntity,
     periodLabel: `${monthFrom}~${monthTo}`
@@ -8991,7 +9015,46 @@ function PnlView({
     monthFrom: monthFrom,
     monthTo: monthTo,
     periodLabel: `${monthFrom}~${monthTo}`
-  }));
+  }),
+  /* 부서별 P&L 서브탭 — 분류 필터(부서/대분류/중분류/계정과목/세목 중 하나) 활성 시 하단 상세 거래내역 */
+  subTab === "department" && detailOnlyActive && /*#__PURE__*/React.createElement(Card, {
+    className: "p-5 mt-4",
+    style: {
+      background: `${COLOR.gold}06`,
+      borderColor: `${COLOR.gold}40`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center justify-between mb-3 flex-wrap gap-2"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "text-xs uppercase tracking-wider",
+    style: { color: COLOR.gold, letterSpacing: "0.12em", fontWeight: 700 }
+  }, "\u25B8 \uC0C1\uC138 \uAC70\uB798\uB0B4\uC5ED \u2014 \uAE00\ub85c\ubc8c \ud544\ud130 \uc801\uc6a9"), /*#__PURE__*/React.createElement("div", {
+    className: "text-[11px] mt-1",
+    style: { color: COLOR.textDim }
+  }, [global부서 !== "전체" && `부서: ${global부서}`,
+       global구분 !== "전체" && `대분류: ${global구분}`,
+       global분류항목 !== "전체" && `중분류: ${global분류항목}`,
+       global과목명 !== "전체" && `계정과목: ${global과목명}`,
+       global계정과목 !== "전체" && `세목: ${global계정과목}`].filter(Boolean).join(" · ")),
+  /*#__PURE__*/React.createElement("div", {
+    className: "text-[11px] mt-0.5",
+    style: { color: COLOR.textDim }
+  }, departmentFiltered.length.toLocaleString(), "\uAC74 \xB7 \uD569\uACC4 ", /*#__PURE__*/React.createElement("b", {
+    style: { color: COLOR.text, fontFamily: MONO }
+  }, Math.round(departmentFiltered.reduce((s, r) => s + r.amount, 0)).toLocaleString(), "\uC6D0"))),
+  /*#__PURE__*/React.createElement("button", {
+    onClick: () => downloadCsvManagerial(departmentFiltered),
+    className: "px-3 py-1.5 rounded-lg text-xs font-medium",
+    style: {
+      background: `${COLOR.gold}15`,
+      border: `1px solid ${COLOR.gold}40`,
+      color: COLOR.gold,
+      cursor: "pointer"
+    }
+  }, "\u2B07 Excel \uB2E4\uC6B4\uB85C\uB4DC")), /*#__PURE__*/React.createElement(PnlDetailTable, {
+    rows: departmentFiltered,
+    showOrg: true
+  })));
 }
 function SubTab({
   active,
@@ -9036,6 +9099,15 @@ function SubTab({
  *   headcount = { mapping: {공통부서: [Y조직]}, byMonth: {YYYY-MM: {조직: 인원}} }
  *   allocConfig = [{계정과목, targets: [Y조직]}]
  */
+/* ════════════════ 공통비 배부손익 ════════════════
+ * 사용자 사양:
+ *   - 단위 = Master_인원현황 B열 (TVPP_xEMS, TVPP_GridFlex, 굿뉴스에너지 등)
+ *   - 공통조직 = Master_인원현황 2행 (공통(TVPP), 공통(CI), CEO Staff 등) — 식스티 법인에만 존재
+ *   - 단위가 부서명이면 → 부서별 P&L과 동일 (r.부서 == 단위)
+ *   - 단위가 법인명이면 → 법인 전체 (r.entity == 단위)
+ *   - 공통조직 비용 = Master_배부설정 A열 계정에 한해 Master_관리손익에서 부서명=공통조직인 거래 합산
+ *   - 배부 대상 = 인원현황 Y ∩ 배부설정 Y, 거래월 인원 비례
+ */
 function PnlAllocationView({
   managerial,
   baseFiltered,
@@ -9047,47 +9119,36 @@ function PnlAllocationView({
 }) {
   const [allocResult, summary] = useMemo(() => {
     if (!managerial || managerial.length === 0) {
-      return [null, { 매출통합: 0, 조직비용: 0, 공통비: 0, 최종OP: 0, 미매핑식스티: 0 }];
+      return [null, { 조직매출: 0, 조직비용: 0, 조직OP: 0, 배부비용: 0, 최종OP: 0, 미매핑: 0 }];
     }
 
     // 배부설정 룩업: 계정과목 → [Y조직]
     const allocMap = {};
     (allocConfig || []).forEach(c => { allocMap[c.계정과목] = c.targets || []; });
 
-    // 인원현황 매핑: 공통부서 → [Y조직] (예: '공통(TVPP)' → [TVPP_xEMS, TVPP_Gridflex, ...])
+    // 인원현황 매핑: 공통조직 → [Y단위]
     const deptMapping = (headcount && headcount.mapping) || {};
-    const commonDepts = new Set(Object.keys(deptMapping)); // 공통부서 이름 집합
+    const commonDeptList = Object.keys(deptMapping); // 표 컬럼 순서 (시트 순서 유지)
+    const commonDeptSet = new Set(commonDeptList);
 
-    // 단위(배부대상) = Master_인원현황 B열에 적힌 조직/법인 (순서 유지)
+    // 단위 목록 (Master_인원현황 B열 순서)
     let unitNames = ((headcount && headcount.allocationUnits) || []).slice();
-    // 폴백 1: 옛 형식(allocationUnits 없음) — mapping의 모든 Y조직 합집합
-    if (unitNames.length === 0 && Object.keys(deptMapping).length > 0) {
+    if (unitNames.length === 0 && commonDeptList.length > 0) {
       const set = new Set();
       Object.values(deptMapping).forEach(arr => arr.forEach(o => set.add(o)));
       unitNames = Array.from(set);
     }
-    // 폴백 2: 인원현황이 아예 없음 — baseFiltered에서 비공통 부서 unique
-    if (unitNames.length === 0) {
-      const allDepts = new Set();
-      baseFiltered.forEach(r => {
-        const d = String(r.부서 || "").trim();
-        if (d && !commonDepts.has(d)) allDepts.add(d);
-      });
-      unitNames = Array.from(allDepts).sort();
-    }
-    const unitSet = new Set(unitNames);
 
-    // 각 단위의 직접 손익 집계
-    const direct = {};
-    unitNames.forEach(u => {
-      direct[u] = {
-        매출: 0, 원가: 0, 판관비: 0, 인건비: 0,
-        영업외수익: 0, 영업외비용: 0, 배부받은공통비: 0,
-      };
+    // 각 단위의 직접 손익 + 공통조직별 배부받은 금액
+    const initDirect = () => ({
+      매출: 0, 영업외수익: 0,
+      원가: 0, 판관비: 0, 영업외비용: 0,
+      byCommon: Object.fromEntries(commonDeptList.map(c => [c, 0])),
     });
+    const direct = {};
+    unitNames.forEach(u => { direct[u] = initDirect(); });
 
-    const allocDetail = [];
-    const commonByAccount = {};
+    // 미매핑 누적
     const unmappedDetails = {};
     let unmappedSum = 0;
     const recordUnmapped = (r, reason) => {
@@ -9096,21 +9157,10 @@ function PnlAllocationView({
       const account = r.계정과목 || "(미지정)";
       const key = `${dept}||${account}||${r.entity}`;
       if (!unmappedDetails[key]) {
-        unmappedDetails[key] = { 부서: `${dept} [${r.entity}]`, 계정과목: account, 금액: 0, 건수: 0, 이유: reason };
+        unmappedDetails[key] = { 부서: dept, entity: r.entity, 계정과목: account, 금액: 0, 건수: 0, 이유: reason };
       }
       unmappedDetails[key].금액 += r.amount;
       unmappedDetails[key].건수 += 1;
-    };
-
-    const addToDirect = (unit, r, cat) => {
-      if (cat === "매출") direct[unit].매출 += r.amount;
-      else if (cat === "원가") direct[unit].원가 += r.amount;
-      else if (cat === "판관비") {
-        direct[unit].판관비 += r.amount;
-        if ((r.분류항목 || "").includes("인건비")) direct[unit].인건비 += r.amount;
-      }
-      else if (cat === "영업외수익") direct[unit].영업외수익 += r.amount;
-      else if (cat === "영업외비용") direct[unit].영업외비용 += r.amount;
     };
 
     baseFiltered.forEach(r => {
@@ -9119,8 +9169,8 @@ function PnlAllocationView({
       const account = r.계정과목 || "";
       const month = r.monthKey || "";
 
-      // 1) 공통부서 → 배부 시도
-      if (dept && commonDepts.has(dept)) {
+      // 1) 공통조직 (식스티 부서) → 배부 처리
+      if (dept && commonDeptSet.has(dept)) {
         const fromAlloc = allocMap[account];
         if (!fromAlloc) {
           recordUnmapped(r, "배부설정 A열에 등록되지 않은 계정과목 → 배부 제외");
@@ -9133,2057 +9183,226 @@ function PnlAllocationView({
         const fromMapping = deptMapping[dept];
         const targets = fromMapping.filter(u => fromAlloc.includes(u));
         if (targets.length === 0) {
-          recordUnmapped(r, `${dept}는 [${fromMapping.join(",")}]에 매핑되고 ${account}는 [${fromAlloc.join(",")}]에 배부되는데 교집합 없음`);
+          recordUnmapped(r, `${dept} ↔ ${account} 매핑 교집합 없음`);
           return;
         }
-
         const weights = targets.map(t => getHeadcountAt(headcount, t, month));
         const totalW = weights.reduce((s, w) => s + w, 0);
-
-        const accKey = `${dept}|${account}`;
-        if (!commonByAccount[accKey]) {
-          commonByAccount[accKey] = { 공통부서: dept, 계정과목: account, 금액: 0, targets };
-        }
-        commonByAccount[accKey].금액 += r.amount;
-
         if (totalW === 0) {
           const each = r.amount / targets.length;
-          targets.forEach((t, i) => {
-            if (!direct[t]) direct[t] = { 매출: 0, 원가: 0, 판관비: 0, 인건비: 0, 영업외수익: 0, 영업외비용: 0, 배부받은공통비: 0 };
-            direct[t].배부받은공통비 += each;
-            allocDetail.push({ 월: month, 공통부서: dept, 계정과목: account, 단위: t, 가중치: 0, 비율: 1/targets.length, 금액: each, 원금액: r.amount });
+          targets.forEach(t => {
+            if (!direct[t]) direct[t] = initDirect();
+            if (direct[t].byCommon[dept] == null) direct[t].byCommon[dept] = 0;
+            direct[t].byCommon[dept] += each;
           });
         } else {
           targets.forEach((t, i) => {
-            if (!direct[t]) direct[t] = { 매출: 0, 원가: 0, 판관비: 0, 인건비: 0, 영업외수익: 0, 영업외비용: 0, 배부받은공통비: 0 };
-            const ratio = weights[i] / totalW;
-            const amt = r.amount * ratio;
-            direct[t].배부받은공통비 += amt;
-            allocDetail.push({ 월: month, 공통부서: dept, 계정과목: account, 단위: t, 가중치: weights[i], 비율: ratio, 금액: amt, 원금액: r.amount });
+            if (!direct[t]) direct[t] = initDirect();
+            if (direct[t].byCommon[dept] == null) direct[t].byCommon[dept] = 0;
+            direct[t].byCommon[dept] += r.amount * weights[i] / totalW;
           });
         }
         return;
       }
 
-      // 2) 직접 귀속 — 매칭 우선순위:
-      //    A. 부서명이 단위 중 하나면 → 그 부서 단위로 집계
-      //    B. 부서가 비어있거나 단위에 없으면 → 법인명이 단위에 있으면 그 법인 단위로 집계
-      if (dept && unitSet.has(dept)) {
-        addToDirect(dept, r, cat);
+      // 2) 직접 귀속
+      const addCat = (u) => {
+        if (cat === "매출") direct[u].매출 += r.amount;
+        else if (cat === "원가") direct[u].원가 += r.amount;
+        else if (cat === "판관비") direct[u].판관비 += r.amount;
+        else if (cat === "영업외수익") direct[u].영업외수익 += r.amount;
+        else if (cat === "영업외비용") direct[u].영업외비용 += r.amount;
+      };
+      // 부서 매칭 우선 (TVPP_xEMS 등)
+      if (dept && direct[dept]) {
+        addCat(dept);
         return;
       }
-      if (r.entity && unitSet.has(r.entity)) {
-        addToDirect(r.entity, r, cat);
+      // 법인 매칭 (굿뉴스에너지, 패리티빌더즈)
+      if (r.entity && direct[r.entity]) {
+        addCat(r.entity);
         return;
       }
-
-      // 3) 매핑 안 됨
-      recordUnmapped(r, `${dept ? `부서 '${dept}'` : "부서명 없음"} + 법인 '${r.entity}' 둘 다 인원현황 B열에 없음`);
+      // 미매핑
+      recordUnmapped(r, `부서 '${dept || "(빈)"}'  + 법인 '${r.entity}' 둘 다 단위에 없음`);
     });
 
-    // 단위별 최종 손익
+    // 단위별 결과
     const midMonth = monthTo || monthFrom || "";
     const units = unitNames.map(u => {
-      const d = direct[u] || { 매출: 0, 원가: 0, 판관비: 0, 인건비: 0, 영업외수익: 0, 영업외비용: 0, 배부받은공통비: 0 };
-      const 매출통합 = d.매출 + d.영업외수익;
+      const d = direct[u] || initDirect();
+      const 조직매출 = d.매출 + d.영업외수익;
       const 조직비용 = d.원가 + d.판관비 + d.영업외비용;
-      const 조직OP = 매출통합 - 조직비용;
-      const 최종OP = 조직OP - d.배부받은공통비;
+      const 조직OP = 조직매출 - 조직비용;
+      const 배부비용 = commonDeptList.reduce((s, c) => s + (d.byCommon[c] || 0), 0);
+      const 최종OP = 조직OP - 배부비용;
       return {
         단위: u,
-        매출: d.매출, 원가: d.원가, 판관비: d.판관비, 인건비: d.인건비,
-        영업외수익: d.영업외수익, 영업외비용: d.영업외비용,
-        매출통합, 조직비용, 조직OP, 최종OP,
-        배부받은공통비: d.배부받은공통비,
+        매출: d.매출, 영업외수익: d.영업외수익, 조직매출,
+        원가: d.원가, 판관비: d.판관비, 영업외비용: d.영업외비용, 조직비용,
+        조직OP, byCommon: d.byCommon, 배부비용, 최종OP,
         인원: getHeadcountAt(headcount, u, midMonth),
       };
     });
 
-    const totalCommon = Object.values(commonByAccount).reduce((s, c) => s + c.금액, 0);
     const totals = {
-      매출통합: units.reduce((s, u) => s + u.매출통합, 0),
-      조직비용: units.reduce((s, u) => s + u.조직비용, 0),
-      조직OP: units.reduce((s, u) => s + u.조직OP, 0),
-      공통비: totalCommon,
-      최종OP: units.reduce((s, u) => s + u.최종OP, 0),
-      미매핑식스티: unmappedSum,
       매출: units.reduce((s, u) => s + u.매출, 0),
+      영업외수익: units.reduce((s, u) => s + u.영업외수익, 0),
+      조직매출: units.reduce((s, u) => s + u.조직매출, 0),
       원가: units.reduce((s, u) => s + u.원가, 0),
       판관비: units.reduce((s, u) => s + u.판관비, 0),
-      인건비: units.reduce((s, u) => s + u.인건비, 0),
-      영업외수익: units.reduce((s, u) => s + u.영업외수익, 0),
       영업외비용: units.reduce((s, u) => s + u.영업외비용, 0),
+      조직비용: units.reduce((s, u) => s + u.조직비용, 0),
+      조직OP: units.reduce((s, u) => s + u.조직OP, 0),
+      배부비용: units.reduce((s, u) => s + u.배부비용, 0),
+      최종OP: units.reduce((s, u) => s + u.최종OP, 0),
+      byCommon: Object.fromEntries(commonDeptList.map(c => [c, units.reduce((s, u) => s + (u.byCommon[c] || 0), 0)])),
+      미매핑: unmappedSum,
     };
+
     return [{
-      units, allocDetail,
-      commonByAccount: Object.values(commonByAccount).sort((a, b) => b.금액 - a.금액),
+      units, commonDeptList,
       unmappedDetails: Object.values(unmappedDetails).sort((a, b) => Math.abs(b.금액) - Math.abs(a.금액)),
     }, totals];
   }, [managerial, baseFiltered, allocConfig, headcount, monthFrom, monthTo]);
 
-  const hasConfig = allocConfig && allocConfig.length > 0;
-  const hasHC = headcount && headcount.byMonth && Object.keys(headcount.byMonth).length > 0;
-  const hasMapping = headcount && headcount.mapping && Object.keys(headcount.mapping).length > 0;
-  if (!managerial || managerial.length === 0) {
-    return /*#__PURE__*/React.createElement(Card, {
-      className: "p-8 text-center"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "text-2xl mb-2"
-    }, "\uD83E\uDE99"), /*#__PURE__*/React.createElement("div", {
-      className: "text-sm",
-      style: {
-        color: COLOR.textDim
-      }
-    }, "Master_\uAD00\uB9AC\uC190\uC775 \uB370\uC774\uD130\uB97C \uBA3C\uC800 \uC5C5\uB85C\uB4DC\uD574 \uC8FC\uC138\uC694"));
-  }
-  return /*#__PURE__*/React.createElement("div", {
-    className: "space-y-4"
-  }, (!hasConfig || !hasHC) && /*#__PURE__*/React.createElement(Card, {
-    className: "p-5",
-    style: {
-      background: `${COLOR.warn}06`,
-      borderColor: `${COLOR.warn}40`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-sm font-semibold mb-2",
-    style: {
-      color: COLOR.warn
-    }
-  }, "\u26A0 \uBC30\uBD80 \uC124\uC815\uC774 \uD544\uC694\uD569\uB2C8\uB2E4"), /*#__PURE__*/React.createElement("div", {
-    className: "text-[12px] space-y-2",
-    style: {
-      color: COLOR.textDim,
-      lineHeight: 1.7
-    }
-  }, !hasConfig && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "1. Master_\uBC30\uBD80\uC124\uC815"), " \uC2DC\uD2B8\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4 \u2014 \uCEEC\uB7FC: ", /*#__PURE__*/React.createElement("code", {
-    style: codeStyle
-  }, "\uACC4\uC815\uACFC\uBAA9 | xEMS | Gridflex | ER | \uAD7F\uB274\uC2A4\uC5D0\uB108\uC9C0 | \uD328\uB9AC\uD2F0\uBE4C\uB354\uC988 | (\uBE44\uACE0)"), /*#__PURE__*/React.createElement("br", null), "\uAC01 \uB2E8\uC704 \uCEEC\uB7FC\uC5D0 ", /*#__PURE__*/React.createElement("b", null, "Y"), "/", /*#__PURE__*/React.createElement("b", null, "N"), " \uC785\uB825 (Y = \uADF8 \uB2E8\uC704\uC5D0 \uBC30\uBD80)"), !hasHC && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "2. Master_\uC778\uC6D0\uD604\uD669"), " \uC2DC\uD2B8\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4 \u2014 \uCEEC\uB7FC: ", /*#__PURE__*/React.createElement("code", {
-    style: codeStyle
-  }, "\uB2E8\uC704 | \uC2DC\uC791\uC6D4 | \uC885\uB8CC\uC6D4 | \uC778\uC6D0 | (\uBE44\uACE0)"), /*#__PURE__*/React.createElement("br", null), "\uB2E8\uC704 = xEMS / Gridflex / ER / \uAD7F\uB274\uC2A4\uC5D0\uB108\uC9C0 / \uD328\uB9AC\uD2F0\uBE4C\uB354\uC988", /*#__PURE__*/React.createElement("br", null), "\uC885\uB8CC\uC6D4 \uBE44\uC6CC\uB450\uBA74 \uD604\uC7AC\uAE4C\uC9C0 \uC801\uC6A9"), /*#__PURE__*/React.createElement("div", {
-    className: "mt-2 pt-2",
-    style: {
-      borderTop: `1px dashed ${COLOR.warn}40`,
-      color: COLOR.textMute
-    }
-  }, "\u25B8 \uB370\uC774\uD130 \uAC00\uC838\uC624\uAE30 \uD0ED\uC5D0\uC11C CSV \uC5C5\uB85C\uB4DC \uB610\uB294 Google Sheets\uC5D0\uC11C \uB3D9\uAE30\uD654 \uAC00\uB2A5"))),
-  allocResult && allocResult.units.length === 0 && /*#__PURE__*/React.createElement(Card, {
-    className: "p-8 text-center",
-    style: {
-      background: `${COLOR.warn}06`,
-      borderColor: `${COLOR.warn}40`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-4xl mb-3"
-  }, "\u26A0\uFE0F"), /*#__PURE__*/React.createElement("div", {
-    className: "text-base font-bold mb-2",
-    style: { color: COLOR.warn }
-  }, "\uB2E8\uC704 \uBAA9\uB85D\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4"), /*#__PURE__*/React.createElement("div", {
-    className: "text-[12px]",
-    style: { color: COLOR.textDim, lineHeight: 1.7, maxWidth: 500, margin: "0 auto" }
-  }, "Master_\uC778\uC6D0\uD604\uD669 \uC2DC\uD2B8\uC758 ", /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "B\uC5F4(\uBC30\uBD80\uC870\uC9C1)"), "\uC5D0 \ub2e8\uc704\uba85(TVPP_xEMS, \uad7f\ub274\uc2a4\uc5d0\ub108\uc9c0 \ub4f1)\uc744 \uc785\ub825\ud55c \ud6c4 ",
-  /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "\uB370\uC774\uD130 \uAC00\uC838\uC624\uAE30 \uD0ED\uC5D0\uC11C \uB3D9\uAE30\uD654"), "\ub97c \uD574\uC8FC\uC138\uC694.")), /*#__PURE__*/React.createElement(Card, {
-    className: "p-5",
-    style: {
-      background: `linear-gradient(135deg, ${COLOR.gold}08, ${COLOR.purple}06)`,
-      borderColor: `${COLOR.gold}30`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center justify-between flex-wrap gap-3 mb-3"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "text-[10px] uppercase tracking-wider font-bold",
-    style: {
-      color: COLOR.gold,
-      letterSpacing: "0.18em"
-    }
-  }, "\uD83E\uDE99 \uACF5\uD1B5\uBE44 \uBC30\uBD80\uC190\uC775"), /*#__PURE__*/React.createElement("div", {
-    className: "text-[12px] mt-1",
-    style: {
-      color: COLOR.textDim,
-      lineHeight: 1.5
-    }
-  }, "\uC2DD\uC2A4\uD2F0\uD5E4\uB974\uCE20 \uACF5\uD1B5\uBE44 \u2192 5\uAC1C \uB2E8\uC704\uC5D0 \uC778\uC6D0\uC218 \uBE44\uB840 \uBC30\uBD80 \xB7 \uBC30\uBD80 \uD6C4 \uB2E8\uC704\uBCC4 \uC9C4\uC9DC \uC190\uC775")), /*#__PURE__*/React.createElement("div", {
-    className: "text-right"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-[10px]",
-    style: {
-      color: COLOR.textMute
-    }
-  }, periodLabel), /*#__PURE__*/React.createElement("div", {
-    className: "text-[10px]",
-    style: {
-      color: COLOR.textMute,
-      marginTop: 2
-    }
-  }, "\uC778\uC6D0: ", allocResult ? allocResult.units.map(u => `${u.단위} ${u.인원 || 0}`).join(" · ") : "(\uB370\uC774\uD130 \uC5C6\uC74C)"))), /*#__PURE__*/React.createElement("div", {
-    className: "grid grid-cols-2 md:grid-cols-4 gap-3 mt-4"
-  }, /*#__PURE__*/React.createElement(Card, {
-    className: "p-3",
-    style: {
-      background: `${COLOR.gold}10`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-[10px]",
-    style: {
-      color: COLOR.textMute,
-      letterSpacing: "0.1em"
-    }
-  }, "\uCD1D \uB9E4\uCD9C"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 18,
-      fontFamily: MONO,
-      fontWeight: 700,
-      color: COLOR.text,
-      marginTop: 4
-    }
-  }, fmtKRW(summary.매출통합)), /*#__PURE__*/React.createElement("div", {
-    className: "text-[10px]",
-    style: {
-      color: COLOR.textMute,
-      marginTop: 2
-    }
-  }, "\uB9E4\uCD9C + \uC601\uC5C5\uC678\uC218\uC775")), /*#__PURE__*/React.createElement(Card, {
-    className: "p-3",
-    style: {
-      background: `${COLOR.danger}08`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-[10px]",
-    style: {
-      color: COLOR.textMute,
-      letterSpacing: "0.1em"
-    }
-  }, "\uC870\uC9C1\uBE44\uC6A9"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 18,
-      fontFamily: MONO,
-      fontWeight: 700,
-      color: COLOR.text,
-      marginTop: 4
-    }
-  }, fmtKRW(summary.조직비용)), /*#__PURE__*/React.createElement("div", {
-    className: "text-[10px]",
-    style: {
-      color: COLOR.textMute,
-      marginTop: 2
-    }
-  }, "\uC6D0\uAC00+\uD310\uAD00\uBE44+\uC601\uC5C5\uC678\uBE44\uC6A9")), /*#__PURE__*/React.createElement(Card, {
-    className: "p-3",
-    style: {
-      background: `${COLOR.purple}10`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-[10px]",
-    style: {
-      color: COLOR.purple,
-      letterSpacing: "0.1em"
-    }
-  }, "\uACF5\uD1B5\uBE44 \uBC30\uBD80"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 18,
-      fontFamily: MONO,
-      fontWeight: 700,
-      color: COLOR.purple,
-      marginTop: 4
-    }
-  }, fmtKRW(summary.공통비)), /*#__PURE__*/React.createElement("div", {
-    className: "text-[10px]",
-    style: {
-      color: COLOR.textMute,
-      marginTop: 2
-    }
-  }, "\uACF5\uD1B5(TVPP/CI/\u2026) \uBD80\uC11C")), /*#__PURE__*/React.createElement(Card, {
-    className: "p-3",
-    style: {
-      background: `${COLOR.success}08`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-[10px]",
-    style: {
-      color: COLOR.success,
-      letterSpacing: "0.1em"
-    }
-  }, "\uCD5C\uC885 OP"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 18,
-      fontFamily: MONO,
-      fontWeight: 700,
-      color: summary.최종OP >= 0 ? COLOR.success : COLOR.danger,
-      marginTop: 4
-    }
-  }, fmtKRW(summary.최종OP)), /*#__PURE__*/React.createElement("div", {
-    className: "text-[10px]",
-    style: {
-      color: COLOR.textMute,
-      marginTop: 2
-    }
-  }, "\uC870\uC9C1OP \u2212 \uBC30\uBD80\uBE44\uC6A9"))), summary.미매핑식스티 !== 0 && /*#__PURE__*/React.createElement("div", {
-    className: "mt-3 pt-3 text-[11px]",
-    style: {
-      borderTop: `1px dashed ${COLOR.warn}40`,
-      color: COLOR.textDim
-    }
-  }, "\u26A0 \uC2DD\uC2A4\uD2F0 \uB370\uC774\uD130 \uC911 \uBD80\uC11C \uB9E4\uD551\uB3C4 \uC548 \uB418\uACE0 \uBC30\uBD80\uC124\uC815\uC5D0\uB3C4 \uC5C6\uB294 \uAE08\uC561: ", /*#__PURE__*/React.createElement("b", {
-    style: {
-      color: COLOR.warn,
-      fontFamily: MONO
-    }
-  }, fmtKRW(summary.미매핑식스티)), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.textMute,
-      marginLeft: 6
-    }
-  }, "\u2192 \uC5B4\uB514\uC5D0\uB3C4 \uBC18\uC601 \uC548 \uB428"))),
-  /* 미매핑 디버그 표 — 무엇이 미매핑인지 사용자가 즉시 확인 가능 */
-  allocResult && allocResult.unmappedDetails && allocResult.unmappedDetails.length > 0 && /*#__PURE__*/React.createElement(Card, {
-    className: "p-5",
-    style: {
-      background: `${COLOR.warn}06`,
-      borderColor: `${COLOR.warn}40`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-xs uppercase tracking-wider mb-2 flex items-center gap-2",
-    style: { color: COLOR.warn, letterSpacing: "0.12em" }
-  }, "\u26A0 \uBBF8\uBC18\uC601 \uB370\uC774\uD130 \uC0C1\uC138 (", allocResult.unmappedDetails.length, "\uAC74)"), /*#__PURE__*/React.createElement("div", {
-    className: "text-[11px] mb-3",
-    style: { color: COLOR.textDim, lineHeight: 1.7 }
-  }, /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "\ubc30\ubd80 \uaddc\uce59:"), " \uacf5\ud1b5\ubd80\uc11c \ube44\uc6a9\uc740 ",
-    /*#__PURE__*/React.createElement("b", { style: { color: COLOR.gold } }, "(\ubd80\uc11c\uba85 \u2208 Master_\uc778\uc6d0\ud604\ud669 \ud5e4\ub354) AND (\uacc4\uc815\uacfc\ubaa9 \u2208 Master_\ubc30\ubd80\uc124\uc815 A\uc5f4)"),
-    " \ub458 \ub2e4 \ub9cc\uc871\ud574\uc57c \ubc30\ubd80\ub429\ub2c8\ub2e4.",
-    /*#__PURE__*/React.createElement("br", null),
-    "\u25B8 ",
-    /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "\ubc30\ubd80\uc124\uc815\uc5d0 \uc5c6\ub294 \uacc4\uc815\uacfc\ubaa9"),
-    ": \ubc30\ubd80\uc124\uc815 \uc2dc\ud2b8 A\uc5f4\uc5d0 \uc774 \uacc4\uc815\uc744 \ucd94\uac00\ud558\uace0 \ub300\uc0c1 \uc870\uc9c1\uc744 Y\ub85c \ub9c8\ud0b9\uc11c\uc694.",
-    /*#__PURE__*/React.createElement("br", null),
-    "\u25B8 ",
-    /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "\uc5d0\uc774\uc11c \ud574\ub2f9\ud558\uc9c0 \uc54a\ub294 \ubd80\uc11c\uba85"),
-    " (\uc608: TVPP_Energy Registry): \uc774\uac8c \uacf5\ud1b5\ubd80\uc11c\ub77c\uba74 \uc778\uc6d0\ud604\ud669 \ud5e4\ub354(2\ud589)\uc5d0 \ucd94\uac00, \uc9c1\uc811\uc870\uc9c1\uc774\ub77c\uba74 xEMS/Gridflex/ER \uc774\ub984\uc73c\ub85c \uc218\uc815\ud558\uc138\uc694."),
-  /*#__PURE__*/React.createElement("div", {
-    className: "rounded-lg overflow-hidden",
-    style: { border: `1px solid ${COLOR.warn}30` }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "overflow-auto",
-    style: { maxHeight: 320 }
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "w-full text-[11px]",
-    style: { borderCollapse: "collapse" }
-  }, /*#__PURE__*/React.createElement("thead", {
-    style: { position: "sticky", top: 0, background: `${COLOR.warn}10`, zIndex: 1 }
-  }, /*#__PURE__*/React.createElement("tr", {
-    style: { borderBottom: `1px solid ${COLOR.warn}40` }
-  }, /*#__PURE__*/React.createElement("th", { style: thStyle }, "\ubd80\uc11c\uba85"),
-    /*#__PURE__*/React.createElement("th", { style: thStyle }, "\uacc4\uc815\uacfc\ubaa9"),
-    /*#__PURE__*/React.createElement("th", { style: { ...thStyle, textAlign: "right" } }, "\uae08\uc561"),
-    /*#__PURE__*/React.createElement("th", { style: { ...thStyle, textAlign: "center" } }, "\uac74\uc218"),
-    /*#__PURE__*/React.createElement("th", { style: thStyle }, "\uc774\uc720"))),
-  /*#__PURE__*/React.createElement("tbody", null, allocResult.unmappedDetails.map((d, k) => /*#__PURE__*/React.createElement("tr", {
-    key: k,
-    style: { borderBottom: `1px dashed ${COLOR.border}` }
-  }, /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, fontFamily: MONO, color: COLOR.danger, fontWeight: 500 }
-  }, d.부서),
-    /*#__PURE__*/React.createElement("td", { style: tdStyle }, d.계정과목),
-    /*#__PURE__*/React.createElement("td", {
-      style: { ...tdStyle, textAlign: "right", fontFamily: MONO, color: COLOR.warn, fontWeight: 500 }
-    }, Math.round(d.금액).toLocaleString()),
-    /*#__PURE__*/React.createElement("td", {
-      style: { ...tdStyle, textAlign: "center", fontFamily: MONO, color: COLOR.textMute }
-    }, d.건수),
-    /*#__PURE__*/React.createElement("td", {
-      style: { ...tdStyle, fontSize: 10, color: COLOR.textDim }
-    }, d.이유)))))))), allocResult && /*#__PURE__*/React.createElement(Card, {
-    className: "p-5"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-xs uppercase tracking-wider mb-3",
-    style: {
-      color: COLOR.textMute,
-      letterSpacing: "0.12em"
-    }
-  }, "\uB2E8\uC704\uBCC4 \uC190\uC775 \u2014 \uC9C1\uC811 + \uBC30\uBD80\uBC1B\uC740 \uACF5\uD1B5\uBE44"), /*#__PURE__*/React.createElement("div", {
-    className: "rounded-lg overflow-hidden",
-    style: {
-      border: `1px solid ${COLOR.border}`
-    }
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "w-full text-[12px]",
-    style: {
-      borderCollapse: "collapse"
-    }
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
-    style: {
-      background: COLOR.surfaceEl,
-      borderBottom: `1px solid ${COLOR.borderHi}`
-    }
-  }, /*#__PURE__*/React.createElement("th", {
-    style: thStyle
-  }, "\uB2E8\uC704"), /*#__PURE__*/React.createElement("th", {
-    style: { ...thStyle, textAlign: "center" }
-  }, "\uC778\uC6D0"), /*#__PURE__*/React.createElement("th", {
-    style: { ...thStyle, textAlign: "right" }
-  }, "\uB9E4\uCD9C"), /*#__PURE__*/React.createElement("th", {
-    style: { ...thStyle, textAlign: "right" }
-  }, "(\u2212) \uC870\uC9C1\uBE44\uC6A9"), /*#__PURE__*/React.createElement("th", {
-    style: { ...thStyle, textAlign: "right" }
-  }, "\uC870\uC9C1OP"), /*#__PURE__*/React.createElement("th", {
-    style: { ...thStyle, textAlign: "right", color: COLOR.purple }
-  }, "(\u2212) \uBC30\uBD80\uBE44\uC6A9"), /*#__PURE__*/React.createElement("th", {
-    style: { ...thStyle, textAlign: "right" }
-  }, "\uCD5C\uC885OP"), /*#__PURE__*/React.createElement("th", {
-    style: { ...thStyle, textAlign: "right" }
-  }, "OP \uB9C8\uC9C4"))), /*#__PURE__*/React.createElement("tbody", null, allocResult.units.map((u, k) => /*#__PURE__*/React.createElement("tr", {
-    key: k,
-    style: { borderBottom: `1px dashed ${COLOR.border}` }
-  }, /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, fontWeight: 500 }
-  }, u.단위), /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, textAlign: "center", fontFamily: MONO, color: COLOR.textDim }
-  }, u.인원), /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, textAlign: "right", fontFamily: MONO }
-  }, Math.round(u.매출통합).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, textAlign: "right", fontFamily: MONO, color: COLOR.danger }
-  }, Math.round(u.조직비용).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, textAlign: "right", fontFamily: MONO, fontWeight: 600, color: u.조직OP >= 0 ? COLOR.success : COLOR.danger, background: `${COLOR.success}05` }
-  }, Math.round(u.조직OP).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, textAlign: "right", fontFamily: MONO, color: COLOR.purple, fontWeight: 500 }
-  }, u.배부받은공통비 > 0 ? "\u2212" + Math.round(u.배부받은공통비).toLocaleString() : "0"), /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, textAlign: "right", fontFamily: MONO, fontWeight: 700, color: u.최종OP >= 0 ? COLOR.success : COLOR.danger, background: u.최종OP >= 0 ? `${COLOR.gold}10` : `${COLOR.danger}08` }
-  }, Math.round(u.최종OP).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, textAlign: "right", fontFamily: MONO, color: u.최종OP >= 0 ? COLOR.success : COLOR.danger }
-  }, u.매출통합 > 0 ? (u.최종OP / u.매출통합 * 100).toFixed(1) + "%" : "-")))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", {
-    style: { background: `${COLOR.gold}10`, borderTop: `2px solid ${COLOR.gold}50` }
-  }, /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, fontWeight: 700, color: COLOR.gold }
-  }, "\uD569\uACC4"), /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, textAlign: "center", fontFamily: MONO, fontWeight: 700 }
-  }, allocResult.units.reduce((s, u) => s + u.인원, 0)), /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, textAlign: "right", fontFamily: MONO, fontWeight: 700 }
-  }, Math.round(summary.매출통합).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, textAlign: "right", fontFamily: MONO, fontWeight: 700, color: COLOR.danger }
-  }, Math.round(summary.조직비용).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, textAlign: "right", fontFamily: MONO, fontWeight: 700, color: summary.조직OP >= 0 ? COLOR.success : COLOR.danger }
-  }, Math.round(summary.조직OP).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, textAlign: "right", fontFamily: MONO, fontWeight: 700, color: COLOR.purple }
-  }, "\u2212", Math.round(summary.공통비).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: { ...tdStyle, textAlign: "right", fontFamily: MONO, fontWeight: 700, color: summary.최종OP >= 0 ? COLOR.success : COLOR.danger }
-  }, Math.round(summary.최종OP).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: tdStyle
-  })))))), allocResult && allocResult.commonByAccount.length > 0 && /*#__PURE__*/React.createElement(Card, {
-    className: "p-5"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-xs uppercase tracking-wider mb-3",
-    style: {
-      color: COLOR.textMute,
-      letterSpacing: "0.12em"
-    }
-  }, "\uBC30\uBD80 \uBA85\uC138 \u2014 \uACF5\uD1B5\uBD80\uC11C \xD7 \uACC4\uC815\uACFC\uBAA9 \u2192 \uB2E8\uC704\uBCC4 (\uAC80\uC99D\uC6A9)"), /*#__PURE__*/React.createElement("div", {
-    className: "rounded-lg overflow-hidden",
-    style: {
-      border: `1px solid ${COLOR.border}`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "overflow-auto",
-    style: {
-      maxHeight: 400
-    }
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "w-full text-[11px]",
-    style: {
-      borderCollapse: "collapse"
-    }
-  }, /*#__PURE__*/React.createElement("thead", {
-    style: {
-      position: "sticky",
-      top: 0,
-      background: COLOR.surfaceEl,
-      zIndex: 1
-    }
-  }, /*#__PURE__*/React.createElement("tr", {
-    style: {
-      borderBottom: `1px solid ${COLOR.borderHi}`
-    }
-  }, /*#__PURE__*/React.createElement("th", {
-    style: thStyle
-  }, "\uACF5\uD1B5\uBD80\uC11C"), /*#__PURE__*/React.createElement("th", {
-    style: thStyle
-  }, "\uACC4\uC815\uACFC\uBAA9"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, "\uC6D0\uAE08\uC561"), /*#__PURE__*/React.createElement("th", {
-    style: thStyle
-  }, "\u2192 \uB300\uC0C1 \uB2E8\uC704"))), /*#__PURE__*/React.createElement("tbody", null, allocResult.commonByAccount.map((c, k) => /*#__PURE__*/React.createElement("tr", {
-    key: k,
-    style: {
-      borderBottom: `1px dashed ${COLOR.border}`
-    }
-  }, /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      color: COLOR.purple,
-      fontWeight: 500
-    }
-  }, c.공통부서), /*#__PURE__*/React.createElement("td", {
-    style: tdStyle
-  }, c.계정과목), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      color: COLOR.text,
-      fontWeight: 500
-    }
-  }, Math.round(c.금액).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      color: COLOR.textDim,
-      fontSize: 10
-    }
-  }, (c.targets || []).join(", ") || "(\uB300\uC0C1 \uC5C6\uC74C)"))))))), /*#__PURE__*/React.createElement("div", {
-    className: "mt-2 text-[10px]",
-    style: {
-      color: COLOR.textMute
-    }
-  }, "\u25B8 \uBC30\uBD80 \uB2E8\uC704 = \uC778\uC6D0\uD604\uD669 \uB9E4\uD551(\u2229) \uBC30\uBD80\uC124\uC815 \uB9E4\uD551 \xB7 \uAC01 \uAC70\ub798\uC6D4\uC758 \uC870\uC9C1\ubcc4 \uC778\uC6D0 \ube44\ub840\ub85c \ubc30\ubd80")));
-}
-const codeStyle = {
-  background: COLOR.surfaceEl,
-  padding: "1px 6px",
-  borderRadius: 3,
-  fontFamily: MONO,
-  fontSize: 10
-};
-
-/* ════════════════ 수주관리 (Master_수주) ════════════════ */
-/* ════════════════ 수주관리 (Master_수주) ════════════════ */
-/* 코드 정규화 — 대괄호 안의 코드 추출, 없으면 trim된 원본 */
-function normProjCode(s) {
-  const str = String(s || "").trim();
-  if (!str) return null;
-  const m = str.match(/\[([^\]]+)\]/);
-  return m ? m[1].trim() : str;
-}
-function OrdersView({
-  orders,
-  managerial
-}) {
-  const [globalEntity, setGlobalEntity] = useState("전체");
-  const [global담당조직, setGlobal담당조직] = useState("전체");
-  const [global변경상태, setGlobal변경상태] = useState("전체");
-  const [planMode, setPlanMode] = useState("최초계획"); // 최초계획 / 변경계획
-  const [variationFilter, setVariationFilter] = useState("전체");
-  const [search, setSearch] = useState("");
-  const hasOrders = orders && orders.length > 0;
-  const allEntities = useMemo(() => {
-    if (!hasOrders) return [];
-    const present = new Set(orders.map(r => r.entity));
-    const ordered = STANDARD_ENTITIES.filter(e => present.has(e));
-    const extra = [...present].filter(e => !STANDARD_ENTITIES.includes(e));
-    return [...ordered, ...extra];
-  }, [orders, hasOrders]);
-  const allOrgs = useMemo(() => hasOrders ? [...new Set(orders.map(r => r.담당조직))].filter(Boolean).sort() : [], [orders, hasOrders]);
-  const allStates = useMemo(() => hasOrders ? [...new Set(orders.map(r => r.변경상태))].filter(Boolean).sort() : [], [orders, hasOrders]);
-
-  // ─── 실적 매칭 (법인+프로젝트키) ───
-  const realByEntityProject = useMemo(() => {
-    if (!managerial || managerial.length === 0) return {};
-    const result = {};
-    managerial.forEach(r => {
-      if (r.구분 !== "매출") return; // C열 = 매출만
-      let key = null;
-      if (r.entity === "식스티헤르츠") {
-        key = normProjCode(r.프로젝트); // [코드] 추출
-      } else {
-        key = r.프로젝트 ? r.프로젝트.trim() : null; // L열 그대로
-      }
-      if (!key) return;
-      if (!result[r.entity]) result[r.entity] = {};
-      result[r.entity][key] = (result[r.entity][key] || 0) + r.amount;
-    });
-    return result;
-  }, [managerial]);
-
-  // 행에 실적 부착 (식스티만 1:1, 그 외는 0)
-  const ordersWithReal = useMemo(() => {
-    return orders.map(o => {
-      let real = 0,
-        matched = false;
-      if (o.entity === "식스티헤르츠") {
-        const code = normProjCode(o.프로젝트코드);
-        const entityMap = realByEntityProject[o.entity] || {};
-        if (code && entityMap[code] != null) {
-          real = entityMap[code];
-          matched = true;
-        }
-      }
-      return {
-        ...o,
-        real,
-        matched
-      };
-    });
-  }, [orders, realByEntityProject]);
-
-  // 1단계 필터 (법인/조직/변경상태)
-  const baseFiltered = useMemo(() => {
-    return ordersWithReal.filter(r => {
-      if (globalEntity !== "전체" && r.entity !== globalEntity) return false;
-      if (global담당조직 !== "전체" && r.담당조직 !== global담당조직) return false;
-      if (global변경상태 !== "전체" && r.변경상태 !== global변경상태) return false;
-      return true;
-    });
-  }, [ordersWithReal, globalEntity, global담당조직, global변경상태]);
-
-  // 계획 금액 선택 (최초 vs 변경) — '전체' 모드일 때는 변경계획 기준 (보수적)
-  const showBoth = planMode === "전체";
-  const effectivePlanMode = planMode === "전체" ? "변경계획" : planMode;
-  const planOf = r => effectivePlanMode === "최초계획" ? r.최초계획예상매출 : r.변경후예상매출;
-
-  // ─── 법인별 집계 ───
-  const byEntity = useMemo(() => {
-    const m = new Map();
-    baseFiltered.forEach(r => {
-      if (!m.has(r.entity)) m.set(r.entity, {
-        entity: r.entity,
-        최초: 0,
-        변경: 0,
-        future: 0,
-        real: 0,
-        count: 0,
-        matched: 0,
-        변동: 0,
-        drop: 0
-      });
-      const o = m.get(r.entity);
-      o.최초 += r.최초계획예상매출;
-      o.변경 += r.변경후예상매출;
-      o.future += r.이후매출;
-      o.real += r.real || 0; // 식스티만 행에 매칭됨
-      if (r.matched) o.matched += 1;
-      o.count += 1;
-      if (r.변동있음) o.변동 += 1;
-      if (r.drop) o.drop += 1;
-    });
-    const arr = [];
-    STANDARD_ENTITIES.forEach(e => {
-      if (m.has(e)) arr.push(m.get(e));
-    });
-    [...m.values()].forEach(v => {
-      if (!STANDARD_ENTITIES.includes(v.entity)) arr.push(v);
-    });
-    // 식스티 외 법인: 프로젝트명 집합 ↔ 실적 매칭으로 합산
-    arr.forEach(o => {
-      if (o.entity !== "식스티헤르츠") {
-        const entityMap = realByEntityProject[o.entity] || {};
-        const projsInOrders = new Set(baseFiltered.filter(r => r.entity === o.entity).map(r => (r.프로젝트명 || "").trim()).filter(Boolean));
-        let sum = 0,
-          matchedProjs = 0;
-        projsInOrders.forEach(p => {
-          if (entityMap[p] != null) {
-            sum += entityMap[p];
-            matchedProjs += 1;
-          }
-        });
-        o.real = sum;
-        o.matched = matchedProjs;
-      }
-      o.plan = effectivePlanMode === "최초계획" ? o.최초 : o.변경;
-      o.달성률 = o.plan > 0 ? o.real / o.plan * 100 : null;
-      o.잔여 = o.plan - o.real;
-    });
-    return arr;
-  }, [baseFiltered, realByEntityProject, planMode]);
-  const totalReal = useMemo(() => byEntity.reduce((s, e) => s + (e.real || 0), 0), [byEntity]);
-  const totalMatchedProj = useMemo(() => byEntity.reduce((s, e) => s + (e.matched || 0), 0), [byEntity]);
-
-  // ─── 요약 ───
-  const summary = useMemo(() => {
-    const 최초 = baseFiltered.reduce((s, r) => s + r.최초계획예상매출, 0);
-    const 변경 = baseFiltered.reduce((s, r) => s + r.변경후예상매출, 0);
-    const future = baseFiltered.reduce((s, r) => s + r.이후매출, 0);
-    const 변동건수 = baseFiltered.filter(r => r.변동있음).length;
-    const dropCount = baseFiltered.filter(r => r.drop).length;
-    const dropAmount = baseFiltered.filter(r => r.drop).reduce((s, r) => s + r.최초계획예상매출, 0);
-    const plan = effectivePlanMode === "최초계획" ? 최초 : 변경;
-    return {
-      최초,
-      변경,
-      future,
-      plan,
-      gap: 최초 - 변경,
-      변경비율: 최초 > 0 ? 변경 / 최초 * 100 : null,
-      건수: baseFiltered.length,
-      변동건수,
-      dropCount,
-      dropAmount
-    };
-  }, [baseFiltered, planMode]);
-  const overallPct = summary.plan > 0 ? totalReal / summary.plan * 100 : null;
-  const overallRemain = summary.plan - totalReal;
-
-  // ─── 식스티 프로젝트별 (1행=1프로젝트, 코드 매칭) ───
-  const sixtyProjects = useMemo(() => {
-    return baseFiltered.filter(r => r.entity === "식스티헤르츠").map(r => ({
-      ...r,
-      plan: effectivePlanMode === "최초계획" ? r.최초계획예상매출 : r.변경후예상매출,
-      계약금액: effectivePlanMode === "최초계획" ? r.기존계약금액 : r.변경계약금액
-    })).map(r => ({
-      ...r,
-      잔여: r.plan - r.real,
-      달성률: r.plan > 0 ? r.real / r.plan * 100 : null
-    })).sort((a, b) => b.plan - a.plan);
-  }, [baseFiltered, planMode]);
-
-  // ─── 식스티 외 법인 — 프로젝트명별 합계 그룹 ───
-  const otherProjects = useMemo(() => {
-    const groups = new Map(); // key: entity + "|" + 프로젝트명
-    baseFiltered.filter(r => r.entity !== "식스티헤르츠").forEach(r => {
-      const key = r.entity + "|" + (r.프로젝트명 || "");
-      if (!groups.has(key)) groups.set(key, {
-        entity: r.entity,
-        프로젝트명: r.프로젝트명 || "(미지정)",
-        최초: 0,
-        변경: 0,
-        future: 0,
-        기존계약: 0,
-        변경계약: 0,
-        count: 0,
-        거래처들: new Set(),
-        변동: 0,
-        drop: 0,
-        변동상세: new Set(),
-        상태들: new Set()
-      });
-      const g = groups.get(key);
-      g.최초 += r.최초계획예상매출;
-      g.변경 += r.변경후예상매출;
-      g.future += r.이후매출;
-      g.기존계약 += r.기존계약금액 || 0;
-      g.변경계약 += r.변경계약금액 || 0;
-      g.count += 1;
-      if (r.거래처) g.거래처들.add(r.거래처);
-      if (r.변동있음) {
-        g.변동 += 1;
-        if (r.변동구분) g.변동상세.add(r.변동구분);
-      }
-      if (r.drop) g.drop += 1;
-      if (r.변경상태) g.상태들.add(r.변경상태);
-    });
-    // 실적 부착
-    const arr = [...groups.values()].map(g => {
-      const entityMap = realByEntityProject[g.entity] || {};
-      const real = entityMap[g.프로젝트명] != null ? entityMap[g.프로젝트명] : 0;
-      const plan = effectivePlanMode === "최초계획" ? g.최초 : g.변경;
-      const 계약금액 = effectivePlanMode === "최초계획" ? g.기존계약 : g.변경계약;
-      return {
-        ...g,
-        거래처수: g.거래처들.size,
-        거래처목록: [...g.거래처들].join(", "),
-        plan,
-        real,
-        계약금액,
-        잔여: plan - real,
-        달성률: plan > 0 ? real / plan * 100 : null,
-        상태리스트: [...g.상태들].join(", ")
-      };
-    });
-    return arr.sort((a, b) => b.plan - a.plan);
-  }, [baseFiltered, realByEntityProject, planMode]);
-
-  // 변경상태별 / 변동구분별 (보조)
-  const byState = useMemo(() => {
-    const m = new Map();
-    baseFiltered.forEach(r => {
-      const k = r.변경상태 || "(미지정)";
-      if (!m.has(k)) m.set(k, {
-        state: k,
-        plan: 0,
-        count: 0
-      });
-      const o = m.get(k);
-      o.plan += planOf(r);
-      o.count += 1;
-    });
-    const order = ["확정", "확정/계약대기", "계약완료", "제안(50%이상)", "제안(50%미만)", "제안예정", "예상", "미선정/드랍"];
-    return [...m.values()].sort((a, b) => {
-      const ai = order.indexOf(a.state);
-      const bi = order.indexOf(b.state);
-      return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
-    });
-  }, [baseFiltered, planMode]);
-  const byVariation = useMemo(() => {
-    const m = new Map();
-    baseFiltered.forEach(r => {
-      r.변동들.forEach(v => {
-        if (!m.has(v)) m.set(v, {
-          type: v,
-          count: 0,
-          gap: 0
-        });
-        const o = m.get(v);
-        o.count += 1;
-        o.gap += r.gap;
-      });
-    });
-    return [...m.values()].sort((a, b) => b.count - a.count);
-  }, [baseFiltered]);
-
-  // 식스티 담당조직별 (식스티만 — 코드 매칭 가능하므로)
-  const byOrg = useMemo(() => {
-    const m = new Map();
-    baseFiltered.filter(r => r.entity === "식스티헤르츠").forEach(r => {
-      const k = r.담당조직 || "(미지정)";
-      if (!m.has(k)) m.set(k, {
-        담당조직: k,
-        plan: 0,
-        real: 0,
-        count: 0
-      });
-      const o = m.get(k);
-      o.plan += planOf(r);
-      o.real += r.real || 0;
-      o.count += 1;
-    });
-    return [...m.values()].map(o => ({
-      ...o,
-      달성률: o.plan > 0 ? o.real / o.plan * 100 : null
-    })).sort((a, b) => b.plan - a.plan);
-  }, [baseFiltered, planMode]);
-
-  // ─── 상세 표 (식스티는 행 단위, 그 외는 그룹 단위) ───
-  const detailRows = useMemo(() => {
-    // 식스티: 행마다 1줄 (sixtyProjects 그대로)
-    // 그 외: 프로젝트명별 그룹 (otherProjects)
-    let rows = [];
-    if (globalEntity === "전체" || globalEntity === "식스티헤르츠") {
-      rows = rows.concat(sixtyProjects.map(r => ({
-        type: "row",
-        entity: r.entity,
-        담당조직: r.담당조직,
-        거래처: r.거래처,
-        프로젝트명: r.프로젝트명,
-        프로젝트코드: r.프로젝트코드,
-        변경상태: r.변경상태,
-        변동구분: r.변동구분,
-        변동있음: r.변동있음,
-        drop: r.drop,
-        계약금액: r.계약금액 || 0,
-        기존계약: r.기존계약금액 || 0,
-        변경계약: r.변경계약금액 || 0,
-        최초plan: r.최초계획예상매출 || 0,
-        변경plan: r.변경후예상매출 || 0,
-        plan: r.plan,
-        real: r.real,
-        잔여: r.잔여,
-        달성률: r.달성률,
-        count: 1
-      })));
-    }
-    if (globalEntity === "전체" || globalEntity !== "식스티헤르츠") {
-      rows = rows.concat(otherProjects.filter(g => globalEntity === "전체" || g.entity === globalEntity).map(g => ({
-        type: "group",
-        entity: g.entity,
-        담당조직: "",
-        거래처: g.거래처목록 + (g.거래처수 > 1 ? ` (${g.거래처수}개)` : ""),
-        프로젝트명: g.프로젝트명,
-        프로젝트코드: "",
-        변경상태: g.상태리스트,
-        변동구분: [...g.변동상세].join(" / "),
-        변동있음: g.변동 > 0,
-        drop: g.drop > 0,
-        계약금액: g.계약금액 || 0,
-        기존계약: g.기존계약 || 0,
-        변경계약: g.변경계약 || 0,
-        최초plan: g.최초 || 0,
-        변경plan: g.변경 || 0,
-        plan: g.plan,
-        real: g.real,
-        잔여: g.잔여,
-        달성률: g.달성률,
-        count: g.count
-      })));
-    }
-    // 필터
-    if (variationFilter === "변동만") rows = rows.filter(r => r.변동있음);else if (variationFilter === "변동없음") rows = rows.filter(r => !r.변동있음);else if (variationFilter === "미선정드랍") rows = rows.filter(r => r.drop);else if (variationFilter === "달성률낮음") rows = rows.filter(r => r.달성률 != null && r.달성률 < 50);else if (variationFilter === "달성률100이상") rows = rows.filter(r => r.달성률 != null && r.달성률 >= 100);
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      rows = rows.filter(r => (r.프로젝트명 || "").toLowerCase().includes(q) || (r.거래처 || "").toLowerCase().includes(q) || (r.프로젝트코드 || "").toLowerCase().includes(q));
-    }
-    rows.sort((a, b) => b.plan - a.plan);
-    return rows;
-  }, [sixtyProjects, otherProjects, globalEntity, variationFilter, search]);
-  const stateColor = s => {
-    if (s === "확정" || s === "계약완료") return COLOR.success;
-    if (s === "제안(50%이상)") return COLOR.gold;
-    if (s === "제안(50%미만)" || s === "제안예정") return "#c89c3d";
-    if (s === "예상") return COLOR.info;
-    if (s === "미선정/드랍") return COLOR.danger;
-    return COLOR.textDim;
-  };
-  const 달성률Color = pct => {
-    if (pct == null) return COLOR.textMute;
-    if (pct >= 80) return COLOR.success;
-    if (pct >= 50) return COLOR.gold;
-    if (pct >= 20) return "#c89c3d";
-    return COLOR.danger;
-  };
-  const downloadCsv = () => {
-    const headers = showBoth ? ["타입", "법인명", "담당조직", "거래처", "프로젝트", "프로젝트코드", "변경상태", "변동구분", "건수", "기존계약금액", "변경계약금액", "최초계획", "변경계획", "실적", "잔여", "달성률(%)"] : ["타입", "법인명", "담당조직", "거래처", "프로젝트", "프로젝트코드", "변경상태", "변동구분", "건수", effectivePlanMode === "최초계획" ? "기존계약금액" : "변경계약금액", "계획", "실적", "잔여", "달성률(%)"];
-    const dataRows = detailRows.map(r => {
-      const base = [r.type === "group" ? "그룹" : "단건", r.entity, r.담당조직 || "", r.거래처 || "", r.프로젝트명 || "", r.프로젝트코드 || "", r.변경상태 || "", r.변동구분 || "", r.count];
-      const tail = [Math.round(r.real), Math.round(r.잔여), r.달성률 != null ? Number(r.달성률.toFixed(1)) : ""];
-      if (showBoth) {
-        return [...base, Math.round(r.기존계약 || 0), Math.round(r.변경계약 || 0), Math.round(r.최초plan || 0), Math.round(r.변경plan || 0), ...tail];
-      } else {
-        return [...base, Math.round(r.계약금액 || 0), Math.round(r.plan), ...tail];
-      }
-    });
-    downloadExcel(`수주_${planMode}_${new Date().toISOString().slice(0, 10)}.xlsx`, headers, dataRows, `수주_${planMode}`);
-  };
-  const hasManagerial = managerial && managerial.length > 0;
-
-  // early return
-  if (!hasOrders) {
+  if (!allocResult || allocResult.units.length === 0) {
     return /*#__PURE__*/React.createElement(Card, {
       className: "p-8 text-center",
-      style: {
-        background: `${COLOR.info}06`,
-        border: `1px dashed ${COLOR.info}40`
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "text-2xl mb-2"
-    }, "\uD83C\uDFAF"), /*#__PURE__*/React.createElement("div", {
-      className: "text-sm font-semibold mb-1",
-      style: {
-        color: COLOR.info
-      }
-    }, "\uC218\uC8FC \uB370\uC774\uD130\uB97C \uC5C5\uB85C\uB4DC\uD574 \uC8FC\uC138\uC694"), /*#__PURE__*/React.createElement("div", {
-      className: "text-[12px]",
-      style: {
-        color: COLOR.textDim,
-        lineHeight: 1.6
-      }
-    }, "\uB370\uC774\uD130 \uAC00\uC838\uC624\uAE30 \u2192 ", /*#__PURE__*/React.createElement("code", {
-      style: {
-        background: COLOR.surfaceEl,
-        padding: "1px 5px",
-        borderRadius: 3,
-        fontFamily: MONO
-      }
-    }, "Master_\uC218\uC8FC")));
+      style: { background: `${COLOR.warn}06`, borderColor: `${COLOR.warn}40` }
+    }, /*#__PURE__*/React.createElement("div", { className: "text-4xl mb-3" }, "\u26A0\uFE0F"),
+       /*#__PURE__*/React.createElement("div", { className: "text-base font-bold mb-2", style: { color: COLOR.warn } }, "\uB2E8\uC704 \uBAA9\uB85D\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4"),
+       /*#__PURE__*/React.createElement("div", { className: "text-[12px]", style: { color: COLOR.textDim, lineHeight: 1.7, maxWidth: 500, margin: "0 auto" } },
+         "Master_\uC778\uC6D0\ud604\ud669 \uc2dc\ud2b8\uc758 ",
+         /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "B\uc5f4(\ubc30\ubd80\ub300\uc0c1\uc870\uc9c1)"),
+         "\uc5d0 \ub2e8\uc704\uba85(TVPP_xEMS, \uad7f\ub274\uc2a4\uc5d0\ub108\uc9c0 \ub4f1)\uc744 \uc785\ub825\ud55c \ud6c4 ",
+         /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "\ub3d9\uae30\ud654"),
+         "\ud574\uc8fc\uc138\uc694."));
   }
 
-  // ════════════════ 렌더 ════════════════
-  return /*#__PURE__*/React.createElement("div", {
-    className: "space-y-5"
-  }, /*#__PURE__*/React.createElement(Card, {
-    className: "p-0 overflow-hidden",
-    style: {
-      borderColor: `${COLOR.gold}40`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center justify-between px-6 py-3",
-    style: {
-      background: `linear-gradient(90deg, ${COLOR.gold}10, ${COLOR.success}06)`,
-      borderBottom: `1px solid ${COLOR.gold}25`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center gap-3 flex-wrap"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "text-[10px] uppercase tracking-wider font-bold",
-    style: {
-      color: COLOR.gold,
-      letterSpacing: "0.18em"
-    }
-  }, "\uD83D\uDCCA 2026\uB144 \uB9E4\uCD9C \u2014 \uBAA9\uD45C \uB300\uBE44 \uC218\uC8FC \uB2EC\uC131"), /*#__PURE__*/React.createElement("span", {
-    className: "text-[10px]",
-    style: {
-      color: COLOR.textMute
-    }
-  }, "\xB7 ", summary.건수, "\uAC74 \xB7 \uB9E4\uCE6D ", totalMatchedProj, "\uAC74 ", !hasManagerial && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.warn,
-      marginLeft: 6
-    }
-  }, "\xB7 \uAD00\uB9AC\uC190\uC775 \uB370\uC774\uD130 \uC5C6\uC74C"))), /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center gap-1 p-1 rounded-lg",
-    style: {
-      background: COLOR.surface,
-      border: `1px solid ${COLOR.border}`
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "text-[10px] mr-1 ml-1",
-    style: {
-      color: COLOR.textMute,
-      letterSpacing: "0.1em"
-    }
-  }, "\uAE30\uC900"), ["전체", "최초계획", "변경계획"].map(m => /*#__PURE__*/React.createElement("button", {
-    key: m,
-    onClick: () => setPlanMode(m),
-    style: {
-      padding: "4px 10px",
-      fontSize: 11,
-      fontWeight: 600,
-      background: planMode === m ? COLOR.gold : "transparent",
-      color: planMode === m ? "#fff" : COLOR.textDim,
-      border: "none",
-      borderRadius: 6,
-      cursor: "pointer"
-    }
-  }, m)))), /*#__PURE__*/React.createElement("div", {
-    className: showBoth ? "grid grid-cols-2 md:grid-cols-5" : "grid grid-cols-2 md:grid-cols-4"
-  }, showBoth && /*#__PURE__*/React.createElement("div", {
-    className: "p-5",
-    style: {
-      background: `${COLOR.gold}10`,
-      borderRight: `1px solid ${COLOR.gold}25`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center gap-1.5 mb-3"
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      width: 6,
-      height: 6,
-      background: COLOR.gold,
-      borderRadius: 1
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "text-[10px] uppercase font-bold",
-    style: {
-      color: COLOR.gold,
-      letterSpacing: "0.15em"
-    }
-  }, "\uCD5C\uCD08\uACC4\uD68D")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "baseline",
-      gap: 4,
-      color: COLOR.text
-    }
-  }, (() => {
-    const v = fmtKRWSplit(summary.최초);
-    return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 28,
-        fontFamily: MONO,
-        fontWeight: 700,
-        lineHeight: 1,
-        letterSpacing: "-0.02em"
-      }
-    }, v.sign, v.num), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 13,
-        fontWeight: 500,
-        color: COLOR.textDim
-      }
-    }, v.unit));
-  })()), /*#__PURE__*/React.createElement("div", {
-    className: "text-[10px] mt-2",
-    style: {
-      color: COLOR.textMute
-    }
-  }, "\uCD08\uAE30 \uBAA9\uD45C")), /*#__PURE__*/React.createElement("div", {
-    className: "p-5",
-    style: {
-      background: `${COLOR.gold}14`,
-      borderRight: `1px solid ${COLOR.gold}25`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center gap-1.5 mb-3"
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      width: 6,
-      height: 6,
-      background: COLOR.gold,
-      borderRadius: 1
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "text-[10px] uppercase font-bold",
-    style: {
-      color: COLOR.gold,
-      letterSpacing: "0.15em"
-    }
-  }, showBoth ? "변경계획" : planMode)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "baseline",
-      gap: 4,
-      color: COLOR.text
-    }
-  }, (() => {
-    const v = fmtKRWSplit(showBoth ? summary.변경 : summary.plan);
-    return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: showBoth ? 28 : 32,
-        fontFamily: MONO,
-        fontWeight: 700,
-        lineHeight: 1,
-        letterSpacing: "-0.02em"
-      }
-    }, v.sign, v.num), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: showBoth ? 13 : 14,
-        fontWeight: 500,
-        color: COLOR.textDim
-      }
-    }, v.unit));
-  })()), /*#__PURE__*/React.createElement("div", {
-    className: "text-[10px] mt-2",
-    style: {
-      color: COLOR.textMute
-    }
-  }, showBoth ? `최초 대비 ${summary.gap === 0 ? "동일" : (summary.gap > 0 ? "−" : "+") + fmtKRW(Math.abs(summary.gap))}` : effectivePlanMode === "최초계획" ? "초기 목표" : `최초 대비 ${summary.gap === 0 ? "동일" : (summary.gap > 0 ? "−" : "+") + fmtKRW(Math.abs(summary.gap))}`)), /*#__PURE__*/React.createElement("div", {
-    className: "p-5",
-    style: {
-      background: `${COLOR.success}12`,
-      borderRight: `1px solid ${COLOR.success}25`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center gap-1.5 mb-3"
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      width: 6,
-      height: 6,
-      background: COLOR.success,
-      borderRadius: 1
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "text-[10px] uppercase font-bold",
-    style: {
-      color: COLOR.success,
-      letterSpacing: "0.15em"
-    }
-  }, "\uC2E4\uC801")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "baseline",
-      gap: 4
-    }
-  }, (() => {
-    const v = fmtKRWSplit(totalReal);
-    return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: showBoth ? 28 : 32,
-        fontFamily: MONO,
-        fontWeight: 700,
-        lineHeight: 1,
-        color: COLOR.success,
-        letterSpacing: "-0.02em"
-      }
-    }, v.sign, v.num), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: showBoth ? 13 : 14,
-        fontWeight: 500,
-        color: COLOR.success,
-        opacity: 0.7
-      }
-    }, v.unit));
-  })()), /*#__PURE__*/React.createElement("div", {
-    className: "text-[10px] mt-2",
-    style: {
-      color: COLOR.textMute
-    }
-  }, "\uAD00\uB9AC\uC190\uC775 \uB9E4\uCD9C \xB7 \uB9E4\uCE6D ", totalMatchedProj, "\uAC74")), /*#__PURE__*/React.createElement("div", {
-    className: "p-5",
-    style: {
-      background: `${COLOR.danger}10`,
-      borderRight: `1px solid ${COLOR.danger}25`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center gap-1.5 mb-3"
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      width: 6,
-      height: 6,
-      background: COLOR.danger,
-      borderRadius: 1
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "text-[10px] uppercase font-bold",
-    style: {
-      color: COLOR.danger,
-      letterSpacing: "0.15em"
-    }
-  }, "\uC794\uC5EC")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "baseline",
-      gap: 4
-    }
-  }, (() => {
-    const v = fmtKRWSplit(overallRemain);
-    return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: showBoth ? 28 : 32,
-        fontFamily: MONO,
-        fontWeight: 700,
-        lineHeight: 1,
-        color: overallRemain > 0 ? COLOR.danger : COLOR.textMute,
-        letterSpacing: "-0.02em"
-      }
-    }, v.sign, v.num), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: showBoth ? 13 : 14,
-        fontWeight: 500,
-        color: overallRemain > 0 ? COLOR.danger : COLOR.textMute,
-        opacity: 0.7
-      }
-    }, v.unit));
-  })()), /*#__PURE__*/React.createElement("div", {
-    className: "text-[10px] mt-2",
-    style: {
-      color: COLOR.textMute
-    }
-  }, showBoth ? "변경계획 − 실적" : "계획 − 실적")), /*#__PURE__*/React.createElement("div", {
-    className: "p-5",
-    style: {
-      background: `${달성률Color(overallPct)}18`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center gap-1.5 mb-3"
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      width: 6,
-      height: 6,
-      background: 달성률Color(overallPct),
-      borderRadius: 1
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    className: "text-[10px] uppercase font-bold",
-    style: {
-      color: 달성률Color(overallPct),
-      letterSpacing: "0.15em"
-    }
-  }, "\uB2EC\uC131\uB960")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "baseline",
-      gap: 4
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: showBoth ? 32 : 36,
-      fontFamily: MONO,
-      fontWeight: 700,
-      lineHeight: 1,
-      color: 달성률Color(overallPct),
-      letterSpacing: "-0.02em"
-    }
-  }, overallPct != null ? overallPct.toFixed(1) : "-"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: showBoth ? 14 : 16,
-      fontWeight: 500,
-      color: 달성률Color(overallPct),
-      opacity: 0.7
-    }
-  }, "%")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: 5,
-      background: "rgba(255,255,255,0.5)",
-      borderRadius: 2.5,
-      overflow: "hidden",
-      marginTop: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: `${Math.min(overallPct || 0, 100)}%`,
-      height: "100%",
-      background: 달성률Color(overallPct)
-    }
-  })))), /*#__PURE__*/React.createElement("div", {
-    className: "px-6 py-3 flex items-center gap-4 flex-wrap text-[11px]",
-    style: {
-      background: COLOR.surface,
-      borderTop: `1px solid ${COLOR.border}`,
-      color: COLOR.textDim
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "\uBCC0\uB3D9 \uBC1C\uC0DD ", /*#__PURE__*/React.createElement("b", {
-    style: {
-      color: summary.변동건수 > 0 ? COLOR.warn : COLOR.text
-    }
-  }, summary.변동건수, "\uAC74")), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.rule
-    }
-  }, "\xB7"), /*#__PURE__*/React.createElement("span", null, "\uBBF8\uC120\uC815/\uB4DC\uB78D ", /*#__PURE__*/React.createElement("b", {
-    style: {
-      color: summary.dropCount > 0 ? COLOR.danger : COLOR.text
-    }
-  }, summary.dropCount, "\uAC74"), summary.dropAmount > 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.textMute,
-      marginLeft: 4
-    }
-  }, "(\u2212", fmtKRW(summary.dropAmount), ")")), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.rule
-    }
-  }, "\xB7"), /*#__PURE__*/React.createElement("span", null, "2026\uB144 \uC774\uD6C4\uB9E4\uCD9C ", /*#__PURE__*/React.createElement("b", {
-    style: {
-      color: COLOR.text
-    }
-  }, fmtKRW(summary.future))), /*#__PURE__*/React.createElement("span", {
-    style: {
-      marginLeft: "auto",
-      color: COLOR.textMute
-    }
-  }, "\uACC4\uD68D\u2192\uBCC0\uACBD \uBE44\uC728 ", summary.변경비율 != null ? summary.변경비율.toFixed(1) + "%" : "-"))), /*#__PURE__*/React.createElement(Card, {
-    className: "p-3",
-    style: {
-      background: `${COLOR.gold}05`,
-      borderColor: `${COLOR.gold}25`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center gap-3 flex-wrap"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "text-[10px] uppercase tracking-wider font-semibold",
-    style: {
-      color: COLOR.gold,
-      letterSpacing: "0.1em"
-    }
-  }, "\uD83C\uDFAF \uD544\uD130"), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("select", {
-    value: globalEntity,
-    onChange: e => setGlobalEntity(e.target.value),
-    style: selectStyle
-  }, /*#__PURE__*/React.createElement("option", {
-    value: "\uC804\uCCB4"
-  }, "\uC804\uCCB4 \uBC95\uC778 (", allEntities.length, "\uAC1C)"), allEntities.map(e => /*#__PURE__*/React.createElement("option", {
-    key: e,
-    value: e
-  }, e)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("select", {
-    value: global담당조직,
-    onChange: e => setGlobal담당조직(e.target.value),
-    style: selectStyle
-  }, /*#__PURE__*/React.createElement("option", {
-    value: "\uC804\uCCB4"
-  }, "\uC804\uCCB4 \uC870\uC9C1 (", allOrgs.length, "\uAC1C)"), allOrgs.map(o => /*#__PURE__*/React.createElement("option", {
-    key: o,
-    value: o
-  }, o)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("select", {
-    value: global변경상태,
-    onChange: e => setGlobal변경상태(e.target.value),
-    style: selectStyle
-  }, /*#__PURE__*/React.createElement("option", {
-    value: "\uC804\uCCB4"
-  }, "\uC804\uCCB4 \uC0C1\uD0DC"), allStates.map(s => /*#__PURE__*/React.createElement("option", {
-    key: s,
-    value: s
-  }, s)))), (globalEntity !== "전체" || global담당조직 !== "전체" || global변경상태 !== "전체") && /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      setGlobalEntity("전체");
-      setGlobal담당조직("전체");
-      setGlobal변경상태("전체");
-    },
-    className: "px-2 py-1 rounded text-[10px]",
-    style: {
-      background: COLOR.surface,
-      border: `1px solid ${COLOR.border}`,
-      color: COLOR.gold,
-      cursor: "pointer"
-    }
-  }, "\uCD08\uAE30\uD654"))), /*#__PURE__*/React.createElement(Card, {
-    className: "p-5"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center justify-between mb-3 flex-wrap gap-2"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "text-xs uppercase tracking-wider",
-    style: {
-      color: COLOR.textMute,
-      letterSpacing: "0.12em"
-    }
-  }, "\uBC95\uC778\uBCC4 \u2014 ", showBoth ? "최초 · 변경 · 실적 · 잔여" : `${planMode} · 실적 · 잔여`), /*#__PURE__*/React.createElement("div", {
-    className: "text-[11px] mt-0.5",
-    style: {
-      color: COLOR.textDim
-    }
-  }, showBoth ? /*#__PURE__*/React.createElement(React.Fragment, null, "\uB2EC\uC131\uB960 = ", /*#__PURE__*/React.createElement("b", {
-    style: {
-      color: COLOR.gold
-    }
-  }, "\uBCC0\uACBD\uACC4\uD68D"), " \uAE30\uC900") : /*#__PURE__*/React.createElement(React.Fragment, null, "\uAE30\uC900: ", /*#__PURE__*/React.createElement("b", {
-    style: {
-      color: COLOR.gold
-    }
-  }, planMode), " \uAE08\uC561\uC73C\uB85C \uB2EC\uC131\uB960 \uACC4\uC0B0")))), /*#__PURE__*/React.createElement("div", {
-    className: "rounded-lg overflow-hidden",
-    style: {
-      border: `1px solid ${COLOR.border}`
-    }
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "w-full text-[12px]",
-    style: {
-      borderCollapse: "collapse"
-    }
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
-    style: {
-      background: COLOR.surfaceEl,
-      borderBottom: `1px solid ${COLOR.borderHi}`
-    }
-  }, /*#__PURE__*/React.createElement("th", {
-    style: thStyle
-  }, "\uBC95\uC778"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, "\uAC74\uC218"), showBoth && /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, "\uCD5C\uCD08\uACC4\uD68D"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, showBoth ? "변경계획" : planMode), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, "\uC2E4\uC801"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, "\uC794\uC5EC"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, "\uB2EC\uC131\uB960"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      width: 140
-    }
-  }, "\uC9C4\uD589"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "center"
-    }
-  }, "\uBCC0\uB3D9/\uB4DC\uB78D"))), /*#__PURE__*/React.createElement("tbody", null, byEntity.map((o, k) => /*#__PURE__*/React.createElement("tr", {
-    key: k,
-    style: {
-      borderBottom: `1px dashed ${COLOR.border}`
-    }
-  }, /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      fontWeight: 500
-    }
-  }, o.entity), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      color: COLOR.textDim
-    }
-  }, o.count), showBoth && /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      color: COLOR.textDim
-    }
-  }, Math.round(o.최초).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO
-    }
-  }, Math.round(showBoth ? o.변경 : o.plan).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      color: o.real > 0 ? COLOR.success : COLOR.textMute
-    }
-  }, o.real > 0 ? Math.round(o.real).toLocaleString() : "-"), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      color: o.잔여 > 0 ? COLOR.danger : COLOR.textMute
-    }
-  }, o.잔여 > 0 ? Math.round(o.잔여).toLocaleString() : "-"), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      fontWeight: 600,
-      color: 달성률Color(o.달성률)
-    }
-  }, o.달성률 != null ? o.달성률.toFixed(1) + "%" : "-"), /*#__PURE__*/React.createElement("td", {
-    style: tdStyle
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: 5,
-      background: COLOR.surfaceEl,
-      borderRadius: 2.5,
-      overflow: "hidden"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: `${Math.min(o.달성률 || 0, 100)}%`,
-      height: "100%",
-      background: 달성률Color(o.달성률)
-    }
-  }))), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "center",
-      fontSize: 10
-    }
-  }, o.변동 > 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.warn,
-      marginRight: 4
-    }
-  }, "\uBCC0\uB3D9 ", o.변동), o.drop > 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.danger
-    }
-  }, "\uB4DC\uB78D ", o.drop), o.변동 === 0 && o.drop === 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.textMute
-    }
-  }, "-"))))), /*#__PURE__*/React.createElement("tfoot", null, /*#__PURE__*/React.createElement("tr", {
-    style: {
-      background: `${COLOR.gold}10`,
-      borderTop: `2px solid ${COLOR.gold}50`
-    }
-  }, /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      fontWeight: 700,
-      color: COLOR.gold
-    }
-  }, "\uC804\uCCB4 \uD569\uACC4"), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      fontWeight: 700
-    }
-  }, summary.건수), showBoth && /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      fontWeight: 700,
-      color: COLOR.textDim
-    }
-  }, Math.round(summary.최초).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      fontWeight: 700
-    }
-  }, Math.round(showBoth ? summary.변경 : summary.plan).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      fontWeight: 700,
-      color: COLOR.success
-    }
-  }, Math.round(totalReal).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      fontWeight: 700,
-      color: COLOR.danger
-    }
-  }, Math.round(overallRemain).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      fontWeight: 700,
-      color: 달성률Color(overallPct)
-    }
-  }, overallPct != null ? overallPct.toFixed(1) + "%" : "-"), /*#__PURE__*/React.createElement("td", {
-    style: tdStyle
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: 5,
-      background: COLOR.surfaceEl,
-      borderRadius: 2.5,
-      overflow: "hidden"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: `${Math.min(overallPct || 0, 100)}%`,
-      height: "100%",
-      background: 달성률Color(overallPct)
-    }
-  }))), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "center",
-      fontSize: 10,
-      color: COLOR.textDim
-    }
-  }, summary.변동건수 > 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.warn,
-      marginRight: 4
-    }
-  }, summary.변동건수), summary.dropCount > 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.danger
-    }
-  }, summary.dropCount))))))), /*#__PURE__*/React.createElement("div", {
-    className: "grid grid-cols-1 lg:grid-cols-3 gap-4"
-  }, /*#__PURE__*/React.createElement(Card, {
-    className: "p-4"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-[11px] uppercase tracking-wider mb-3",
-    style: {
-      color: COLOR.textMute,
-      letterSpacing: "0.12em"
-    }
-  }, "\uC2DD\uC2A4\uD2F0 \uB2F4\uB2F9\uC870\uC9C1\uBCC4"), byOrg.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    className: "text-[11px] text-center py-4",
-    style: {
-      color: COLOR.textMute
-    }
-  }, "\uC2DD\uC2A4\uD2F0 \uB370\uC774\uD130 \uC5C6\uC74C") : /*#__PURE__*/React.createElement("div", {
-    className: "space-y-3"
-  }, byOrg.map((o, k) => /*#__PURE__*/React.createElement("div", {
-    key: k,
-    className: "text-[11px]"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center justify-between mb-1"
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.text,
-      fontWeight: 500
-    }
-  }, o.담당조직, " ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.textMute,
-      fontWeight: 400
-    }
-  }, "\xB7 ", o.count, "\uAC74")), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: MONO,
-      color: 달성률Color(o.달성률),
-      fontWeight: 600
-    }
-  }, o.달성률 != null ? o.달성률.toFixed(1) + "%" : "-")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: 4,
-      background: COLOR.surfaceEl,
-      borderRadius: 2,
-      overflow: "hidden",
-      marginBottom: 3
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: `${Math.min(o.달성률 || 0, 100)}%`,
-      height: "100%",
-      background: 달성률Color(o.달성률)
-    }
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "text-[9px]",
-    style: {
-      color: COLOR.textMute,
-      fontFamily: MONO
-    }
-  }, "\uACC4\uD68D ", fmtKRW(o.plan), " \xB7 \uC2E4\uC801 ", fmtKRW(o.real)))))), /*#__PURE__*/React.createElement(Card, {
-    className: "p-4"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-[11px] uppercase tracking-wider mb-3",
-    style: {
-      color: COLOR.textMute,
-      letterSpacing: "0.12em"
-    }
-  }, "\uBCC0\uACBD\uC0C1\uD0DC\uBCC4"), /*#__PURE__*/React.createElement("div", {
-    className: "space-y-2"
-  }, byState.map((s, k) => /*#__PURE__*/React.createElement("div", {
-    key: k,
-    className: "flex items-center gap-2 text-[11px]"
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      width: 8,
-      height: 8,
-      borderRadius: "50%",
-      background: stateColor(s.state),
-      flexShrink: 0
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      flex: 1,
-      color: COLOR.text
-    }
-  }, s.state), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.textMute,
-      fontFamily: MONO
-    }
-  }, s.count, "\uAC74"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.text,
-      fontFamily: MONO,
-      minWidth: 70,
-      textAlign: "right"
-    }
-  }, fmtKRW(s.plan)))))), /*#__PURE__*/React.createElement(Card, {
-    className: "p-4"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "text-[11px] uppercase tracking-wider mb-3",
-    style: {
-      color: COLOR.textMute,
-      letterSpacing: "0.12em"
-    }
-  }, "\uBCC0\uB3D9\uAD6C\uBD84\uBCC4"), byVariation.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    className: "text-[11px] text-center py-4",
-    style: {
-      color: COLOR.textMute
-    }
-  }, "\uBCC0\uB3D9 \uC5C6\uC74C") : /*#__PURE__*/React.createElement("div", {
-    className: "space-y-2"
-  }, byVariation.map((v, k) => /*#__PURE__*/React.createElement("div", {
-    key: k,
-    className: "flex items-center gap-2 text-[11px]"
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      width: 8,
-      height: 8,
-      borderRadius: "50%",
-      background: COLOR.warn,
-      flexShrink: 0
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      flex: 1,
-      color: COLOR.text
-    }
-  }, v.type), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.textMute,
-      fontFamily: MONO
-    }
-  }, v.count, "\uAC74"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: MONO,
-      minWidth: 80,
-      textAlign: "right",
-      color: v.gap > 0 ? COLOR.danger : v.gap < 0 ? COLOR.success : COLOR.textMute
-    }
-  }, v.gap === 0 ? "-" : (v.gap > 0 ? "−" : "+") + fmtKRW(Math.abs(v.gap)))))))), /*#__PURE__*/React.createElement(Card, {
-    className: "p-5"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center justify-between mb-3 flex-wrap gap-2"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "text-xs uppercase tracking-wider",
-    style: {
-      color: COLOR.textMute,
-      letterSpacing: "0.12em"
-    }
-  }, "\uD504\uB85C\uC81D\uD2B8 \uC0C1\uC138 \u2014 ", showBoth ? "최초·변경 비교" : `${planMode} 기준`), /*#__PURE__*/React.createElement("div", {
-    className: "text-[11px] mt-0.5",
-    style: {
-      color: COLOR.textDim
-    }
-  }, detailRows.length.toLocaleString(), "\uAC74 \xB7 \uC2DD\uC2A4\uD2F0\uB294 \uD504\uB85C\uC81D\uD2B8\uCF54\uB4DC\uBCC4 1\uD589, \uADF8 \uC678 \uBC95\uC778\uC740 \uD504\uB85C\uC81D\uD2B8\uBA85\uBCC4 \uADF8\uB8F9 \uD569\uACC4")), /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center gap-2 flex-wrap"
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "text",
-    placeholder: "\uD83D\uDD0D \uAC80\uC0C9",
-    value: search,
-    onChange: e => setSearch(e.target.value),
-    style: {
-      ...inputStyle,
-      fontFamily: "inherit",
-      minWidth: 180
-    }
-  }), /*#__PURE__*/React.createElement("select", {
-    value: variationFilter,
-    onChange: e => setVariationFilter(e.target.value),
-    style: selectStyle
-  }, /*#__PURE__*/React.createElement("option", {
-    value: "\uC804\uCCB4"
-  }, "\uC804\uCCB4"), /*#__PURE__*/React.createElement("option", {
-    value: "\uBCC0\uB3D9\uB9CC"
-  }, "\uBCC0\uB3D9 \uC788\uB294 \uAC83\uB9CC"), /*#__PURE__*/React.createElement("option", {
-    value: "\uBCC0\uB3D9\uC5C6\uC74C"
-  }, "\uBCC0\uB3D9 \uC5C6\uB294 \uAC83\uB9CC"), /*#__PURE__*/React.createElement("option", {
-    value: "\uBBF8\uC120\uC815\uB4DC\uB78D"
-  }, "\uBBF8\uC120\uC815/\uB4DC\uB78D\uB9CC"), /*#__PURE__*/React.createElement("option", {
-    value: "\uB2EC\uC131\uB960\uB0AE\uC74C"
-  }, "\uB2EC\uC131\uB960 50% \uBBF8\uB9CC"), /*#__PURE__*/React.createElement("option", {
-    value: "\uB2EC\uC131\uB960100\uC774\uC0C1"
-  }, "\uB2EC\uC131\uB960 100% \uC774\uC0C1")), /*#__PURE__*/React.createElement("button", {
-    onClick: downloadCsv,
-    className: "px-3 py-1.5 rounded-lg text-xs font-medium",
-    style: {
-      background: `${COLOR.gold}15`,
-      border: `1px solid ${COLOR.gold}40`,
-      color: COLOR.gold,
-      cursor: "pointer"
-    }
-  }, "\u2B07 Excel"))), /*#__PURE__*/React.createElement("div", {
-    className: "rounded-lg overflow-hidden",
-    style: {
-      border: `1px solid ${COLOR.border}`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "overflow-auto",
-    style: {
-      maxHeight: 560
-    }
-  }, /*#__PURE__*/React.createElement("table", {
-    className: "w-full text-[11px]",
-    style: {
-      borderCollapse: "collapse"
-    }
-  }, /*#__PURE__*/React.createElement("thead", {
-    style: {
-      position: "sticky",
-      top: 0,
-      background: COLOR.surfaceEl,
-      zIndex: 1
-    }
-  }, /*#__PURE__*/React.createElement("tr", {
-    style: {
-      borderBottom: `1px solid ${COLOR.borderHi}`
-    }
-  }, /*#__PURE__*/React.createElement("th", {
-    style: thStyle
-  }, "\uBC95\uC778"), /*#__PURE__*/React.createElement("th", {
-    style: thStyle
-  }, "\uD504\uB85C\uC81D\uD2B8"), /*#__PURE__*/React.createElement("th", {
-    style: thStyle
-  }, "\uAC70\uB798\uCC98"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "center"
-    }
-  }, "\uAC74\uC218"), /*#__PURE__*/React.createElement("th", {
-    style: thStyle
-  }, "\uBCC0\uACBD\uC0C1\uD0DC"), showBoth ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, "\uAE30\uC874\uACC4\uC57D"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, "\uBCC0\uACBD\uACC4\uC57D"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, "\uCD5C\uCD08\uACC4\uD68D"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, "\uBCC0\uACBD\uACC4\uD68D")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, effectivePlanMode === "최초계획" ? "기존계약" : "변경계약"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, planMode)), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, "\uC2E4\uC801"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, "\uC794\uC5EC"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      width: 80
-    }
-  }, "\uC9C4\uD589"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...thStyle,
-      textAlign: "right"
-    }
-  }, "\uB2EC\uC131\uB960"))), /*#__PURE__*/React.createElement("tbody", null, detailRows.map((r, k) => /*#__PURE__*/React.createElement("tr", {
-    key: k,
-    style: {
-      borderBottom: `1px dashed ${COLOR.border}`,
-      background: r.drop ? `${COLOR.danger}06` : r.변동있음 ? `${COLOR.warn}06` : r.type === "group" ? `${COLOR.info}03` : "transparent"
-    }
-  }, /*#__PURE__*/React.createElement("td", {
-    style: tdStyle
-  }, r.entity), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      fontWeight: 500,
-      maxWidth: 260,
-      whiteSpace: "nowrap",
-      overflow: "hidden",
-      textOverflow: "ellipsis"
-    },
-    title: r.프로젝트명
-  }, r.type === "group" && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.info,
-      marginRight: 4,
-      fontSize: 9,
-      padding: "1px 4px",
-      background: `${COLOR.info}15`,
-      borderRadius: 2
-    }
-  }, "\uADF8\uB8F9"), r.프로젝트코드 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: COLOR.gold,
-      marginRight: 6,
-      fontFamily: MONO,
-      fontSize: 10,
-      fontWeight: 600
-    }
-  }, "[", normProjCode(r.프로젝트코드), "]"), r.프로젝트명), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      color: COLOR.textDim,
-      maxWidth: 200,
-      whiteSpace: "nowrap",
-      overflow: "hidden",
-      textOverflow: "ellipsis"
-    },
-    title: r.거래처
-  }, r.거래처), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "center",
-      color: r.count > 1 ? COLOR.gold : COLOR.textDim,
-      fontFamily: MONO,
-      fontWeight: r.count > 1 ? 600 : 400
-    }
-  }, r.count), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      color: stateColor((r.변경상태 || "").split(",")[0].trim()),
-      fontSize: 10,
-      maxWidth: 120,
-      whiteSpace: "nowrap",
-      overflow: "hidden",
-      textOverflow: "ellipsis"
-    },
-    title: r.변경상태
-  }, r.변경상태), showBoth ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      color: COLOR.textDim
-    }
-  }, r.기존계약 > 0 ? Math.round(r.기존계약).toLocaleString() : "-"), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      color: COLOR.textDim
-    }
-  }, r.변경계약 > 0 ? Math.round(r.변경계약).toLocaleString() : "-"), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO
-    }
-  }, r.최초plan === 0 ? "-" : Math.round(r.최초plan).toLocaleString()), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      fontWeight: 500
-    }
-  }, r.변경plan === 0 ? "-" : Math.round(r.변경plan).toLocaleString())) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      color: COLOR.textDim
-    }
-  }, r.계약금액 > 0 ? Math.round(r.계약금액).toLocaleString() : "-"), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO
-    }
-  }, r.plan === 0 ? "-" : Math.round(r.plan).toLocaleString())), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      color: r.real > 0 ? COLOR.success : COLOR.textMute
-    }
-  }, r.real > 0 ? Math.round(r.real).toLocaleString() : "-"), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      color: r.잔여 > 0 ? COLOR.danger : COLOR.textMute
-    }
-  }, r.잔여 > 0 ? Math.round(r.잔여).toLocaleString() : "-"), /*#__PURE__*/React.createElement("td", {
-    style: tdStyle
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: 4,
-      background: COLOR.surfaceEl,
-      borderRadius: 2,
-      overflow: "hidden"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: `${Math.min(r.달성률 || 0, 100)}%`,
-      height: "100%",
-      background: 달성률Color(r.달성률)
-    }
-  }))), /*#__PURE__*/React.createElement("td", {
-    style: {
-      ...tdStyle,
-      textAlign: "right",
-      fontFamily: MONO,
-      fontWeight: 600,
-      color: 달성률Color(r.달성률)
-    }
-  }, r.달성률 != null ? r.달성률.toFixed(1) + "%" : "-"))))))), /*#__PURE__*/React.createElement("div", {
-    className: "mt-2 text-[10px] flex items-center gap-3 flex-wrap",
-    style: {
-      color: COLOR.textMute
-    }
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    style: {
-      background: `${COLOR.warn}15`,
-      padding: "1px 6px",
-      borderRadius: 3
-    }
-  }, "\uC8FC\uD669"), " \uBCC0\uB3D9 \uBC1C\uC0DD"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    style: {
-      background: `${COLOR.danger}10`,
-      padding: "1px 6px",
-      borderRadius: 3
-    }
-  }, "\uBE68\uAC15"), " \uBBF8\uC120\uC815/\uB4DC\uB78D"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    style: {
-      background: `${COLOR.info}06`,
-      padding: "1px 6px",
-      borderRadius: 3
-    }
-  }, "\uC605\uC740 \uD30C\uB791"), " \uD504\uB85C\uC81D\uD2B8\uBA85 \uADF8\uB8F9 (\uC2DD\uC2A4\uD2F0 \uC678)"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      marginLeft: "auto"
-    }
-  }, "\uAC74\uC218 = \uADF8\uB8F9\uC5D0 \uBB36\uC778 \uD589 \uC218 (\uAC70\uB798\uCC98\uBCC4)"))));
+  const { units, commonDeptList, unmappedDetails } = allocResult;
+
+  // 표 헤더/셀 스타일
+  const thBase = { padding: "8px 8px", fontSize: 10, fontWeight: 600, color: COLOR.textDim, letterSpacing: "0.06em", textAlign: "right", whiteSpace: "nowrap" };
+  const thLeft = { ...thBase, textAlign: "left" };
+  const tdBase = { padding: "8px 8px", fontSize: 11, color: COLOR.text, fontFamily: MONO, textAlign: "right", whiteSpace: "nowrap" };
+  const tdLeft = { ...tdBase, textAlign: "left", fontFamily: "inherit" };
+  const fmtN = v => Math.round(v || 0).toLocaleString();
+  const signed = v => v == null ? "0" : (Math.abs(Math.round(v)) === 0 ? "0" : Math.round(v).toLocaleString());
+
+  return /*#__PURE__*/React.createElement("div", { className: "space-y-4" },
+    // ── 헤로 4개 KPI ──
+    /*#__PURE__*/React.createElement(Card, { className: "p-5", style: { background: `linear-gradient(135deg, ${COLOR.gold}08, ${COLOR.purple}06)`, borderColor: `${COLOR.gold}30` } },
+      /*#__PURE__*/React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-3 mb-3" },
+        /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("div", { className: "text-[10px] uppercase tracking-wider font-bold", style: { color: COLOR.gold, letterSpacing: "0.14em" } }, "\uD83C\uDFAF \uACF5\uD1B5\uBE44 \uBC30\uBD80\uC190\uC775"),
+          /*#__PURE__*/React.createElement("div", { className: "text-[11px] mt-1", style: { color: COLOR.textDim } },
+            `${units.length}\uAC1C \uB2E8\uC704 \xB7 ${commonDeptList.length}\uAC1C \uACF5\uD1B5\uC870\uC9C1\uC5D0\uC11C \uBC30\uBD80 \xB7 ${periodLabel || ""}`)),
+        /*#__PURE__*/React.createElement("div", { className: "text-[10px]", style: { color: COLOR.textMute } },
+          "\uC778\uC6D0: ", units.map(u => `${u.단위} ${u.인원 || 0}`).join(" \xB7 "))),
+      /*#__PURE__*/React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+        /*#__PURE__*/React.createElement(Card, { className: "p-3", style: { background: `${COLOR.gold}10` } },
+          /*#__PURE__*/React.createElement("div", { className: "text-[10px]", style: { color: COLOR.textMute, letterSpacing: "0.1em" } }, "\uCD1D \uC870\uC9C1\uB9E4\uCD9C"),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontFamily: MONO, fontWeight: 700, color: COLOR.text, marginTop: 4 } }, fmtKRW(summary.조직매출)),
+          /*#__PURE__*/React.createElement("div", { className: "text-[10px]", style: { color: COLOR.textMute, marginTop: 2 } }, "\uB9E4\uCD9C + \uC601\uC5C5\uC678\uC218\uC775")),
+        /*#__PURE__*/React.createElement(Card, { className: "p-3", style: { background: `${COLOR.danger}08` } },
+          /*#__PURE__*/React.createElement("div", { className: "text-[10px]", style: { color: COLOR.textMute, letterSpacing: "0.1em" } }, "\uC870\uC9C1\uBE44\uC6A9"),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontFamily: MONO, fontWeight: 700, color: COLOR.text, marginTop: 4 } }, fmtKRW(summary.조직비용)),
+          /*#__PURE__*/React.createElement("div", { className: "text-[10px]", style: { color: COLOR.textMute, marginTop: 2 } }, "\uC6D0\uAC00+\uD310\uAD00\uBE44+\uC601\uC5C5\uC678\uBE44\uC6A9")),
+        /*#__PURE__*/React.createElement(Card, { className: "p-3", style: { background: `${COLOR.purple}10` } },
+          /*#__PURE__*/React.createElement("div", { className: "text-[10px]", style: { color: COLOR.purple, letterSpacing: "0.1em" } }, "\uACF5\uD1B5\uBE44 \uBC30\uBD80"),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontFamily: MONO, fontWeight: 700, color: COLOR.purple, marginTop: 4 } }, fmtKRW(summary.배부비용)),
+          /*#__PURE__*/React.createElement("div", { className: "text-[10px]", style: { color: COLOR.textMute, marginTop: 2 } }, `${commonDeptList.length}\uAC1C \uACF5\uD1B5\uC870\uC9C1\uC5D0\uC11C`)),
+        /*#__PURE__*/React.createElement(Card, { className: "p-3", style: { background: `${summary.최종OP >= 0 ? COLOR.success : COLOR.danger}08` } },
+          /*#__PURE__*/React.createElement("div", { className: "text-[10px]", style: { color: summary.최종OP >= 0 ? COLOR.success : COLOR.danger, letterSpacing: "0.1em" } }, "\uCD5C\uC885 OP"),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontFamily: MONO, fontWeight: 700, color: summary.최종OP >= 0 ? COLOR.success : COLOR.danger, marginTop: 4 } }, fmtKRW(summary.최종OP)),
+          /*#__PURE__*/React.createElement("div", { className: "text-[10px]", style: { color: COLOR.textMute, marginTop: 2 } }, "\uC870\uC9C1OP \u2212 \uBC30\uBD80\uBE44\uC6A9")))),
+
+    // ── 단위별 손익 표 ──
+    /*#__PURE__*/React.createElement(Card, { className: "p-5" },
+      /*#__PURE__*/React.createElement("div", { className: "flex items-baseline justify-between mb-3 flex-wrap gap-2" },
+        /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("div", { className: "text-xs uppercase tracking-wider", style: { color: COLOR.textMute, letterSpacing: "0.12em" } }, "\uB2E8\uC704\uBCC4 \uACF5\uD1B5\uBE44 \uBC30\uBD80 \uC190\uC775\uACC4\uC0B0\uC11C"),
+          /*#__PURE__*/React.createElement("div", { className: "text-[11px] mt-1", style: { color: COLOR.textDim } }, "\uC870\uC9C1\uB9E4\uCD9C \u2192 \uC870\uC9C1\uBE44\uC6A9 \u2192 \uC870\uC9C1OP \u2192 (\u2212) \uACF5\uD1B5\uC870\uC9C1\uBCC4 \uBC30\uBD80 \u2192 \uCD5C\uC885OP \xB7 \uC6D0 \uB2E8\uC704"))),
+      /*#__PURE__*/React.createElement("div", { className: "rounded-lg overflow-hidden", style: { border: `1px solid ${COLOR.border}` } },
+        /*#__PURE__*/React.createElement("div", { className: "overflow-auto" },
+          /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", minWidth: 1100 } },
+            /*#__PURE__*/React.createElement("thead", null,
+              /*#__PURE__*/React.createElement("tr", { style: { background: COLOR.surfaceEl, borderBottom: `1px solid ${COLOR.borderHi}` } },
+                /*#__PURE__*/React.createElement("th", { style: thLeft }, "\uB2E8\uC704"),
+                /*#__PURE__*/React.createElement("th", { style: { ...thBase, textAlign: "center" } }, "\uC778\uC6D0"),
+                /*#__PURE__*/React.createElement("th", { style: thBase }, "\uB9E4\uCD9C"),
+                /*#__PURE__*/React.createElement("th", { style: { ...thBase, color: COLOR.textMute } }, "(+) \uC601\uC5C5\uC678\uC218\uC775"),
+                /*#__PURE__*/React.createElement("th", { style: { ...thBase, color: COLOR.success, background: `${COLOR.success}10` } }, "\uC870\uC9C1\uB9E4\uCD9C"),
+                /*#__PURE__*/React.createElement("th", { style: { ...thBase, color: COLOR.danger } }, "(\u2212) \uB9E4\uCD9C\uC6D0\uAC00"),
+                /*#__PURE__*/React.createElement("th", { style: { ...thBase, color: COLOR.danger } }, "(\u2212) \uD310\uAD00\uBE44"),
+                /*#__PURE__*/React.createElement("th", { style: { ...thBase, color: COLOR.danger } }, "(\u2212) \uC601\uC5C5\uC678\uBE44\uC6A9"),
+                /*#__PURE__*/React.createElement("th", { style: { ...thBase, color: COLOR.danger, background: `${COLOR.danger}10` } }, "\uC870\uC9C1\uBE44\uC6A9"),
+                /*#__PURE__*/React.createElement("th", { style: { ...thBase, color: COLOR.gold, background: `${COLOR.gold}10` } }, "\uC870\uC9C1OP"),
+                ...commonDeptList.map(c => /*#__PURE__*/React.createElement("th", { key: c, style: { ...thBase, color: COLOR.purple, background: `${COLOR.purple}06` } }, `(\u2212) ${c}`)),
+                /*#__PURE__*/React.createElement("th", { style: { ...thBase, color: COLOR.purple, background: `${COLOR.purple}12` } }, "\uBC30\uBD80\uBE44\uC6A9"),
+                /*#__PURE__*/React.createElement("th", { style: { ...thBase, color: COLOR.gold, background: `${COLOR.gold}15` } }, "\uCD5C\uC885OP"))),
+            /*#__PURE__*/React.createElement("tbody", null,
+              units.map((u, idx) => /*#__PURE__*/React.createElement("tr", { key: idx, style: { borderBottom: `1px dashed ${COLOR.border}` } },
+                /*#__PURE__*/React.createElement("td", { style: { ...tdLeft, fontWeight: 500 } }, u.단위),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, textAlign: "center", color: COLOR.textDim } }, u.인원 || 0),
+                /*#__PURE__*/React.createElement("td", { style: tdBase }, fmtN(u.매출)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: COLOR.textMute } }, fmtN(u.영업외수익)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: u.조직매출 >= 0 ? COLOR.success : COLOR.danger, fontWeight: 600, background: `${COLOR.success}06` } }, fmtN(u.조직매출)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: COLOR.danger } }, fmtN(u.원가)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: COLOR.danger } }, fmtN(u.판관비)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: COLOR.danger } }, fmtN(u.영업외비용)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: COLOR.danger, fontWeight: 600, background: `${COLOR.danger}06` } }, fmtN(u.조직비용)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: u.조직OP >= 0 ? COLOR.success : COLOR.danger, fontWeight: 700, background: `${COLOR.gold}08` } }, fmtN(u.조직OP)),
+                ...commonDeptList.map(c => /*#__PURE__*/React.createElement("td", { key: c, style: { ...tdBase, color: COLOR.purple, background: `${COLOR.purple}04` } }, (u.byCommon[c] || 0) > 0 ? "\u2212" + fmtN(u.byCommon[c]) : "0")),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: COLOR.purple, fontWeight: 700, background: `${COLOR.purple}10` } }, u.배부비용 > 0 ? "\u2212" + fmtN(u.배부비용) : "0"),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: u.최종OP >= 0 ? COLOR.success : COLOR.danger, fontWeight: 700, background: u.최종OP >= 0 ? `${COLOR.gold}12` : `${COLOR.danger}10` } }, fmtN(u.최종OP))))),
+            /*#__PURE__*/React.createElement("tfoot", null,
+              /*#__PURE__*/React.createElement("tr", { style: { background: `${COLOR.gold}10`, borderTop: `2px solid ${COLOR.gold}50` } },
+                /*#__PURE__*/React.createElement("td", { style: { ...tdLeft, fontWeight: 700, color: COLOR.gold } }, "\uD569\uACC4"),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, textAlign: "center", fontWeight: 700 } }, units.reduce((s, u) => s + (u.인원 || 0), 0)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700 } }, fmtN(summary.매출)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700, color: COLOR.textMute } }, fmtN(summary.영업외수익)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700, color: COLOR.success, background: `${COLOR.success}10` } }, fmtN(summary.조직매출)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700, color: COLOR.danger } }, fmtN(summary.원가)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700, color: COLOR.danger } }, fmtN(summary.판관비)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700, color: COLOR.danger } }, fmtN(summary.영업외비용)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700, color: COLOR.danger, background: `${COLOR.danger}10` } }, fmtN(summary.조직비용)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700, color: summary.조직OP >= 0 ? COLOR.success : COLOR.danger, background: `${COLOR.gold}12` } }, fmtN(summary.조직OP)),
+                ...commonDeptList.map(c => /*#__PURE__*/React.createElement("td", { key: c, style: { ...tdBase, fontWeight: 700, color: COLOR.purple, background: `${COLOR.purple}08` } }, (summary.byCommon[c] || 0) > 0 ? "\u2212" + fmtN(summary.byCommon[c]) : "0")),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700, color: COLOR.purple, background: `${COLOR.purple}15` } }, summary.배부비용 > 0 ? "\u2212" + fmtN(summary.배부비용) : "0"),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700, color: summary.최종OP >= 0 ? COLOR.success : COLOR.danger, background: summary.최종OP >= 0 ? `${COLOR.gold}18` : `${COLOR.danger}15` } }, fmtN(summary.최종OP)))))))),
+
+    // ── 미반영 데이터 표 ──
+    unmappedDetails.length > 0 && /*#__PURE__*/React.createElement(Card, { className: "p-5", style: { background: `${COLOR.warn}06`, borderColor: `${COLOR.warn}40` } },
+      /*#__PURE__*/React.createElement("div", { className: "text-xs uppercase tracking-wider mb-2 flex items-center gap-2", style: { color: COLOR.warn, letterSpacing: "0.12em" } },
+        "\u26A0 \uBBF8\uBC18\uC601 \uB370\uC774\uD130 (", unmappedDetails.length, "\uAC74 \xB7 \uD569\uACC4 ", fmtKRW(summary.미매핑), ")"),
+      /*#__PURE__*/React.createElement("div", { className: "text-[11px] mb-3", style: { color: COLOR.textDim, lineHeight: 1.7 } },
+        "\uBC30\uBD80 \uADC0\uCE59: ",
+        /*#__PURE__*/React.createElement("b", { style: { color: COLOR.gold } }, "(\uBD80\uC11C \u2208 \uC778\uC6D0\ud604\ud669 2\ud589 \uacf5\ud1b5\uc870\uc9c1) AND (\uacc4\uc815 \u2208 \ubc30\ubd80\uc124\uc815 A\uc5f4)"),
+        " \ub458 \ub2e4 \ub9cc\uc871\ud574\uc57c \ubc30\ubd80\ub418\uba70, \uadf8 \uc678\ub294 \uc544\ub798\uc5d0 \ub098\uc5f4\ub429\ub2c8\ub2e4."),
+      /*#__PURE__*/React.createElement("div", { className: "rounded-lg overflow-hidden", style: { border: `1px solid ${COLOR.warn}30` } },
+        /*#__PURE__*/React.createElement("div", { className: "overflow-auto", style: { maxHeight: 320 } },
+          /*#__PURE__*/React.createElement("table", { className: "w-full text-[11px]", style: { borderCollapse: "collapse" } },
+            /*#__PURE__*/React.createElement("thead", { style: { position: "sticky", top: 0, background: `${COLOR.warn}10`, zIndex: 1 } },
+              /*#__PURE__*/React.createElement("tr", { style: { borderBottom: `1px solid ${COLOR.warn}40` } },
+                /*#__PURE__*/React.createElement("th", { style: thLeft }, "\ubd80\uc11c\uba85"),
+                /*#__PURE__*/React.createElement("th", { style: thLeft }, "\ubc95\uc778"),
+                /*#__PURE__*/React.createElement("th", { style: thLeft }, "\uacc4\uc815\uacfc\ubaa9"),
+                /*#__PURE__*/React.createElement("th", { style: thBase }, "\uae08\uc561"),
+                /*#__PURE__*/React.createElement("th", { style: { ...thBase, textAlign: "center" } }, "\uac74\uc218"),
+                /*#__PURE__*/React.createElement("th", { style: thLeft }, "\uc774\uc720"))),
+            /*#__PURE__*/React.createElement("tbody", null,
+              unmappedDetails.map((d, k) => /*#__PURE__*/React.createElement("tr", { key: k, style: { borderBottom: `1px dashed ${COLOR.border}` } },
+                /*#__PURE__*/React.createElement("td", { style: { ...tdLeft, color: COLOR.danger, fontFamily: MONO } }, d.부서),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdLeft, color: COLOR.textDim } }, d.entity),
+                /*#__PURE__*/React.createElement("td", { style: tdLeft }, d.계정과목),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: COLOR.warn, fontWeight: 500 } }, fmtN(d.금액)),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, textAlign: "center", color: COLOR.textMute } }, d.건수),
+                /*#__PURE__*/React.createElement("td", { style: { ...tdLeft, fontSize: 10, color: COLOR.textDim } }, d.이유))))))))
+  );
 }
+
 function PnlOverview({
   baseFiltered,
   detailFiltered,
@@ -11765,12 +9984,12 @@ function PnlByOrgView({
     className: dim === "부서" ? "grid grid-cols-2 md:grid-cols-3 gap-2" : "grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2"
   }, dim === "부서" ? /*#__PURE__*/React.createElement(React.Fragment, null,
     /*#__PURE__*/React.createElement(KPI, {
-      label: "\uB9E4\uCD9C",
+      label: "\uC870\uC9C1\uB9E4\uCD9C",
       value: fmtKRW(totalRow.매출 + totalRow.영업외수익),
       sub: `${monthsInRange.length}\uAC1C\uC6D4 \xB7 \uB9E4\uCD9C+\uC601\uC5C5\uC678\uC218\uC775`
     }),
     /*#__PURE__*/React.createElement(KPI, {
-      label: "(\u2212) \uC870\uC9C1\uBE44\uC6A9",
+      label: "\uC870\uC9C1\uBE44\uC6A9",
       value: fmtKRW(totalRow.원가 + totalRow.판관비 + totalRow.영업외비용),
       tone: COLOR.danger,
       sub: "\uC6D0\uAC00+\uD310\uAD00\uBE44+\uC601\uC5C5\uC678\uBE44\uC6A9"
@@ -11779,7 +9998,7 @@ function PnlByOrgView({
       label: "\uC870\uC9C1OP",
       value: fmtKRW((totalRow.매출 + totalRow.영업외수익) - (totalRow.원가 + totalRow.판관비 + totalRow.영업외비용)),
       tone: ((totalRow.매출 + totalRow.영업외수익) - (totalRow.원가 + totalRow.판관비 + totalRow.영업외비용)) >= 0 ? COLOR.success : COLOR.danger,
-      sub: "\uBC30\uBD80 \uC804 \uC870\uC9C1 \uC774\uC775"
+      sub: "\uC870\uC9C1\uB9E4\uCD9C \u2212 \uC870\uC9C1\uBE44\uC6A9"
     })
   ) : /*#__PURE__*/React.createElement(React.Fragment, null,
     /*#__PURE__*/React.createElement(KPI, {
@@ -11999,14 +10218,40 @@ function PnlMatrixTable({
   //   매출 = 매출 + 영업외수익 (영업외수익 합산)
   //   조직비용 = 원가 + 판관비 + 영업외비용
   //   조직OP = 매출(통합) − 조직비용
+  // 부서별 P&L 컬럼 — 항목별 + 소계 (사용자 회계 구조 반영)
+  //   매출 + 영업외수익 = 조직매출
+  //   원가 + 판관비 + 영업외비용 = 조직비용
+  //   조직매출 - 조직비용 = 조직OP
   const deptCols = [{
-    key: "매출통합",
+    key: "매출",
     label: "매출",
+    kind: "income"
+  }, {
+    key: "영업외수익",
+    label: "(+) 영업외수익",
     kind: "income",
+    small: true
+  }, {
+    key: "조직매출",
+    label: "조직매출",
+    kind: "subtotal",
     derive: o => (o.매출 || 0) + (o.영업외수익 || 0)
   }, {
+    key: "원가",
+    label: "(−) 매출원가",
+    kind: "expense"
+  }, {
+    key: "판관비",
+    label: "(−) 판관비",
+    kind: "expense"
+  }, {
+    key: "영업외비용",
+    label: "(−) 영업외비용",
+    kind: "expense",
+    small: true
+  }, {
     key: "조직비용",
-    label: "(−) 조직비용",
+    label: "조직비용",
     kind: "expense",
     derive: o => (o.원가 || 0) + (o.판관비 || 0) + (o.영업외비용 || 0)
   }, {
@@ -12369,14 +10614,19 @@ function downloadCsvPnlByOrg(rows, totalRow, dim) {
   const fmtPct = v => v == null ? "" : Number(v.toFixed(2));
   let headers, dataRows;
   if (dim === "부서") {
-    // 부서별: 매출(매출+영업외수익) / 조직비용(원가+판관비+영업외비용) / 조직OP
-    headers = [dim, "매출", "조직비용", "조직OP", "OP마진(%)", "건수"];
+    // 부서별: 항목별 + 소계 (화면 표와 동일)
+    headers = [dim, "매출", "영업외수익", "조직매출", "원가", "판관비", "영업외비용", "조직비용", "조직OP", "OP마진(%)", "건수"];
     const mkRow = r => {
-      const 매출 = (r.매출 || 0) + (r.영업외수익 || 0);
-      const 조직비용 = (r.원가 || 0) + (r.판관비 || 0) + (r.영업외비용 || 0);
-      const 조직OP = 매출 - 조직비용;
-      const 마진 = 매출 ? 조직OP / 매출 * 100 : null;
-      return [r.name, Math.round(매출), Math.round(조직비용), Math.round(조직OP), fmtPct(마진), r.건수];
+      const 매출 = r.매출 || 0;
+      const 영업외수익 = r.영업외수익 || 0;
+      const 조직매출 = 매출 + 영업외수익;
+      const 원가 = r.원가 || 0;
+      const 판관비 = r.판관비 || 0;
+      const 영업외비용 = r.영업외비용 || 0;
+      const 조직비용 = 원가 + 판관비 + 영업외비용;
+      const 조직OP = 조직매출 - 조직비용;
+      const 마진 = 조직매출 ? 조직OP / 조직매출 * 100 : null;
+      return [r.name, Math.round(매출), Math.round(영업외수익), Math.round(조직매출), Math.round(원가), Math.round(판관비), Math.round(영업외비용), Math.round(조직비용), Math.round(조직OP), fmtPct(마진), r.건수];
     };
     dataRows = rows.map(mkRow);
     dataRows.push(mkRow(totalRow));
