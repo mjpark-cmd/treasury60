@@ -9679,6 +9679,14 @@ function PnlAllocationView({
   );
 }
 
+/* ════════════════ 수주관리 (Master_수주) ════════════════ */
+/* 코드 정규화 — 대괄호 안의 코드 추출, 없으면 trim된 원본 */
+function normProjCode(s) {
+  const str = String(s || "").trim();
+  if (!str) return null;
+  const m = str.match(/\[([^\]]+)\]/);
+  return m ? m[1].trim() : str;
+}
 function OrdersView({
   orders,
   managerial
