@@ -1080,6 +1080,7 @@ function parseHeadcountMatrix(matrix) {
   }
 
   const mapping = {};
+  const allocationUnits = []; // B열에 적힌 배부대상 (조직명 또는 법인명) 순서 유지
   if (mapHeaderRow >= 0) {
     const headers = (matrix[mapHeaderRow] || []).map(v => String(v || "").trim());
     const orgCol = headers.findIndex(h => h === "배부조직");
@@ -1097,6 +1098,7 @@ function parseHeadcountMatrix(matrix) {
       const row = matrix[i] || [];
       const org = String(row[orgCol] || "").trim();
       if (!org) break;  // 빈 행 = 매핑 영역 종료
+      allocationUnits.push(org);
       commonCols.forEach(({ idx, name }) => {
         const v = String(row[idx] || "").trim().toUpperCase();
         if (v === "Y" || v === "YES" || v === "TRUE" || v === "1" || v === "O") {
@@ -1136,7 +1138,7 @@ function parseHeadcountMatrix(matrix) {
     }
   }
 
-  return { mapping, byMonth };
+  return { mapping, byMonth, allocationUnits };
 }
 function parseHeadcount(text) {
   return parseHeadcountMatrix(parseCsvMatrix(text));
@@ -8952,7 +8954,7 @@ function PnlView({
     active: subTab === "allocation",
     onClick: () => setSubTab("allocation")
   }, "\uD83E\uDE99 \uACF5\uD1B5\uBE44 \uBC30\uBD80\uC190\uC775")), subTab === "overview" && /*#__PURE__*/React.createElement(PnlOverview, {
-    baseFiltered: baseFiltered,
+    baseFiltered: detailFiltered,
     detailFiltered: detailFiltered,
     entityLabel: globalEntity,
     periodLabel: `${monthFrom}~${monthTo}`,
@@ -8962,18 +8964,18 @@ function PnlView({
     global과목명: global과목명,
     global계정과목: global계정과목
   }), subTab === "department" && /*#__PURE__*/React.createElement(PnlByOrgView, {
-    filtered: baseFiltered,
+    filtered: detailFiltered,
     dim: "\uBD80\uC11C",
     entityLabel: globalEntity,
     periodLabel: `${monthFrom}~${monthTo}`
   }), subTab === "project" && /*#__PURE__*/React.createElement(PnlByOrgView, {
-    filtered: baseFiltered,
+    filtered: detailFiltered,
     dim: "\uD504\uB85C\uC81D\uD2B8",
     entityLabel: globalEntity,
     periodLabel: `${monthFrom}~${monthTo}`
   }), subTab === "allocation" && /*#__PURE__*/React.createElement(PnlAllocationView, {
     managerial: managerial,
-    baseFiltered: baseFiltered,
+    baseFiltered: detailFiltered,
     allocConfig: allocConfig,
     headcount: headcount,
     monthFrom: monthFrom,
@@ -9046,15 +9048,18 @@ function PnlAllocationView({
     const deptMapping = (headcount && headcount.mapping) || {};
     const commonDepts = new Set(Object.keys(deptMapping)); // 공통부서 이름 집합
 
-    // 단위(직접부서) 발견: baseFiltered에서 부서 unique, 공통부서 제외, 빈 부서 제외
-    const allDeptsSet = new Set();
-    baseFiltered.forEach(r => {
-      const d = String(r.부서 || "").trim();
-      if (d) allDeptsSet.add(d);
-    });
-    const unitNames = Array.from(allDeptsSet).filter(d => !commonDepts.has(d)).sort();
+    // 단위(배부대상) = Master_인원현황 B열에 적힌 조직/법인 (순서 유지)
+    const unitNames = (headcount && headcount.allocationUnits) || [];
+    const unitSet = new Set(unitNames);
 
-    // 각 단위의 직접 손익 집계 + 배부받은공통비
+    // 각 단위가 부서 매칭인지 법인 매칭인지 판단:
+    //   - 부서명이 단위와 일치하는 거래가 있으면 → 부서 매칭 우선
+    //   - 부서명 매칭이 안 되고 법인명이 일치하면 → 법인 매칭 (그 법인 전체)
+    // 단위가 법인명에 해당하는지 미리 체크
+    const ENTITIES_SET = new Set(STANDARD_ENTITIES);
+    const isLegalEntity = u => ENTITIES_SET.has(u);
+
+    // 각 단위의 직접 손익 집계
     const direct = {};
     unitNames.forEach(u => {
       direct[u] = {
@@ -9071,12 +9076,23 @@ function PnlAllocationView({
       unmappedSum += r.amount;
       const dept = String(r.부서 || "").trim() || "(빈 부서)";
       const account = r.계정과목 || "(미지정)";
-      const key = `${dept}||${account}`;
+      const key = `${dept}||${account}||${r.entity}`;
       if (!unmappedDetails[key]) {
-        unmappedDetails[key] = { 부서: dept, 계정과목: account, 금액: 0, 건수: 0, 이유: reason };
+        unmappedDetails[key] = { 부서: `${dept} [${r.entity}]`, 계정과목: account, 금액: 0, 건수: 0, 이유: reason };
       }
       unmappedDetails[key].금액 += r.amount;
       unmappedDetails[key].건수 += 1;
+    };
+
+    const addToDirect = (unit, r, cat) => {
+      if (cat === "매출") direct[unit].매출 += r.amount;
+      else if (cat === "원가") direct[unit].원가 += r.amount;
+      else if (cat === "판관비") {
+        direct[unit].판관비 += r.amount;
+        if ((r.분류항목 || "").includes("인건비")) direct[unit].인건비 += r.amount;
+      }
+      else if (cat === "영업외수익") direct[unit].영업외수익 += r.amount;
+      else if (cat === "영업외비용") direct[unit].영업외비용 += r.amount;
     };
 
     baseFiltered.forEach(r => {
@@ -9087,8 +9103,6 @@ function PnlAllocationView({
 
       // 1) 공통부서 → 배부 시도
       if (dept && commonDepts.has(dept)) {
-        // 매출/영업외수익은 공통부서에 있어도 배부 안 함 — 배부설정 A열에 매출 계정은 없음
-        // 그래도 배부설정에 있으면 배부 시도 (사용자 설정 따름)
         const fromAlloc = allocMap[account];
         if (!fromAlloc) {
           recordUnmapped(r, "배부설정 A열에 등록되지 않은 계정과목 → 배부 제외");
@@ -9115,7 +9129,6 @@ function PnlAllocationView({
         commonByAccount[accKey].금액 += r.amount;
 
         if (totalW === 0) {
-          // 인원 0이면 균등 배부 (대상 단위가 direct에 없을 수도 있으니 보정)
           const each = r.amount / targets.length;
           targets.forEach((t, i) => {
             if (!direct[t]) direct[t] = { 매출: 0, 원가: 0, 판관비: 0, 인건비: 0, 영업외수익: 0, 영업외비용: 0, 배부받은공통비: 0 };
@@ -9134,32 +9147,25 @@ function PnlAllocationView({
         return;
       }
 
-      // 2) 비-공통부서 (직접 귀속) — 부서별 P&L과 동일한 집계
-      if (dept && direct[dept]) {
-        if (cat === "매출") direct[dept].매출 += r.amount;
-        else if (cat === "원가") direct[dept].원가 += r.amount;
-        else if (cat === "판관비") {
-          direct[dept].판관비 += r.amount;
-          if ((r.분류항목 || "").includes("인건비")) direct[dept].인건비 += r.amount;
-        }
-        else if (cat === "영업외수익") direct[dept].영업외수익 += r.amount;
-        else if (cat === "영업외비용") direct[dept].영업외비용 += r.amount;
+      // 2) 직접 귀속 — 매칭 우선순위:
+      //    A. 부서명이 단위 중 하나면 → 그 부서 단위로 집계
+      //    B. 부서가 비어있거나 단위에 없으면 → 법인명이 단위에 있으면 그 법인 단위로 집계
+      if (dept && unitSet.has(dept)) {
+        addToDirect(dept, r, cat);
+        return;
+      }
+      if (r.entity && unitSet.has(r.entity)) {
+        addToDirect(r.entity, r, cat);
         return;
       }
 
-      // 3) 부서 없음 — 미매핑
-      if (!dept) {
-        recordUnmapped(r, "부서명 비어있음");
-      } else {
-        // 비-공통도 아닌데 direct에도 없는 케이스 (이론상 없음)
-        recordUnmapped(r, "부서명 처리 불가");
-      }
+      // 3) 매핑 안 됨
+      recordUnmapped(r, `${dept ? `부서 '${dept}'` : "부서명 없음"} + 법인 '${r.entity}' 둘 다 인원현황 B열에 없음`);
     });
 
-    // 단위별 최종 손익 (배부받은 공통비 때문에 새로 등장한 단위도 포함)
-    const allUnits = Array.from(new Set([...unitNames, ...Object.keys(direct)])).sort();
+    // 단위별 최종 손익
     const midMonth = monthTo || monthFrom || "";
-    const units = allUnits.map(u => {
+    const units = unitNames.map(u => {
       const d = direct[u] || { 매출: 0, 원가: 0, 판관비: 0, 인건비: 0, 영업외수익: 0, 영업외비용: 0, 배부받은공통비: 0 };
       const 매출통합 = d.매출 + d.영업외수익;
       const 조직비용 = d.원가 + d.판관비 + d.영업외비용;
