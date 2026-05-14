@@ -8631,6 +8631,7 @@ function PnlView({
   // 글로벌 필터 (즉시 반영)
   const [monthFrom, setMonthFrom] = useState("");
   const [monthTo, setMonthTo] = useState("");
+  const [global부서, setGlobal부서] = useState("전체");
   const [global구분, setGlobal구분] = useState("전체");
   const [global분류항목, setGlobal분류항목] = useState("전체");
   const [global과목명, setGlobal과목명] = useState("전체");
@@ -8682,18 +8683,26 @@ function PnlView({
     });
   }, [managerial, globalEntity, monthFrom, monthTo]);
 
-  // ── 2단계: 구분/분류항목/과목명/계정과목 필터까지 적용 (상세 보기용) ──
+  // ── 2단계: 부서/구분/분류항목/과목명/계정과목 필터까지 적용 (상세 보기용) ──
   const detailFiltered = useMemo(() => {
     return baseFiltered.filter(r => {
+      if (global부서 !== "전체" && (r.부서 || "(미지정)") !== global부서) return false;
       if (global구분 !== "전체" && r.구분 !== global구분) return false;
       if (global분류항목 !== "전체" && (r.분류항목 || "(미지정)") !== global분류항목) return false;
       if (global과목명 !== "전체" && (r.과목명 || "(미지정)") !== global과목명) return false;
       if (global계정과목 !== "전체" && (r.계정과목 || "(미지정)") !== global계정과목) return false;
       return true;
     });
-  }, [baseFiltered, global구분, global분류항목, global과목명, global계정과목]);
+  }, [baseFiltered, global부서, global구분, global분류항목, global과목명, global계정과목]);
 
-  // 분류항목 목록 (pending 구분 적용 후 — 사용자가 셀렉트로 즉시 좁혀볼 수 있게)
+  // 부서 목록 (현재 기간/법인 범위 내 모든 부서)
+  const 부서List = useMemo(() => {
+    return [...new Set(baseFiltered.map(r => r.부서 || "(미지정)"))]
+      .filter(x => x !== "(미지정)" || baseFiltered.some(r => !r.부서))
+      .sort();
+  }, [baseFiltered]);
+
+  // 분류항목 목록 (구분 적용 후)
   const 분류항목List = useMemo(() => {
     const filtered = global구분 === "전체" ? baseFiltered : baseFiltered.filter(r => r.구분 === global구분);
     return [...new Set(filtered.map(r => r.분류항목 || "(미지정)"))].sort();
@@ -8717,7 +8726,7 @@ function PnlView({
   }, [baseFiltered, global구분, global분류항목, global과목명]);
   const hasDept = useMemo(() => managerial.some(r => r.부서), [managerial]);
   const hasProj = useMemo(() => managerial.some(r => r.프로젝트), [managerial]);
-  const detailOnlyActive = global구분 !== "전체" || global분류항목 !== "전체" || global과목명 !== "전체" || global계정과목 !== "전체";
+  const detailOnlyActive = global부서 !== "전체" || global구분 !== "전체" || global분류항목 !== "전체" || global과목명 !== "전체" || global계정과목 !== "전체";
   return /*#__PURE__*/React.createElement("div", {
     className: "space-y-4"
   }, /*#__PURE__*/React.createElement(Card, {
@@ -8777,11 +8786,31 @@ function PnlView({
       color: COLOR.text
     }
   }, baseFiltered.length.toLocaleString(), "\uAC74"), " \xB7 \uB370\uC774\uD130 \uBC94\uC704 ", minMonth, " ~ ", maxMonth)), /*#__PURE__*/React.createElement("div", {
-    className: "pt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3",
+    className: "pt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3",
     style: {
       borderTop: `1px dashed ${COLOR.gold}30`
     }
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "text-[10px] block mb-1",
+    style: {
+      color: COLOR.textMute
+    }
+  }, "\uBD80\uC11C ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: COLOR.textDim,
+      marginLeft: 4
+    }
+  }, "(F\uC5F4)")), /*#__PURE__*/React.createElement("select", {
+    value: global부서,
+    onChange: e => setGlobal부서(e.target.value),
+    style: selectStyle,
+    className: "w-full"
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "\uC804\uCCB4"
+  }, "\uC804\uCCB4 (", 부서List.length, "\uAC1C)"), 부서List.map(d => /*#__PURE__*/React.createElement("option", {
+    key: d,
+    value: d
+  }, d)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     className: "text-[10px] block mb-1",
     style: {
       color: COLOR.textMute
@@ -8887,6 +8916,7 @@ function PnlView({
     }
   }, /*#__PURE__*/React.createElement("span", null, "\u25B8 \uC0C1\uC138 \uD544\uD130 \uD65C\uC131 \u2014 \uAC70\uB798\uB0B4\uC5ED\uC5D0 \uC801\uC6A9"), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
+      setGlobal부서("전체");
       setGlobal구분("전체");
       setGlobal분류항목("전체");
       setGlobal과목명("전체");
@@ -8949,46 +8979,7 @@ function PnlView({
     monthFrom: monthFrom,
     monthTo: monthTo,
     periodLabel: `${monthFrom}~${monthTo}`
-  }),
-  /* 상세 필터(대분류/중분류/계정과목/계정과목_세목) 활성 시 어느 서브탭에서든 하단에 상세 거래내역 표시
-     단, '전체 손익분석' 서브탭은 자체 상세 내역 카드가 이미 있으니 중복 방지 */
-  detailOnlyActive && subTab !== "overview" && /*#__PURE__*/React.createElement(Card, {
-    className: "p-5",
-    style: {
-      background: `${COLOR.gold}06`,
-      borderColor: `${COLOR.gold}40`
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center justify-between mb-3 flex-wrap gap-2"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "text-xs uppercase tracking-wider",
-    style: { color: COLOR.gold, letterSpacing: "0.12em", fontWeight: 700 }
-  }, "\u25B8 \uC0C1\uC138 \uAC70\uB798\uB0B4\uC5ED \u2014 \uAE00\ub85c\ubc8c \ud544\ud130 \uc801\uc6a9"), /*#__PURE__*/React.createElement("div", {
-    className: "text-[11px] mt-1",
-    style: { color: COLOR.textDim }
-  }, [global구분 !== "전체" && `대분류: ${global구분}`,
-       global분류항목 !== "전체" && `중분류: ${global분류항목}`,
-       global과목명 !== "전체" && `계정과목: ${global과목명}`,
-       global계정과목 !== "전체" && `세목: ${global계정과목}`].filter(Boolean).join(" · ")),
-  /*#__PURE__*/React.createElement("div", {
-    className: "text-[11px] mt-0.5",
-    style: { color: COLOR.textDim }
-  }, detailFiltered.length.toLocaleString(), "\uAC74 \xB7 \uD569\uACC4 ", /*#__PURE__*/React.createElement("b", {
-    style: { color: COLOR.text, fontFamily: MONO }
-  }, Math.round(detailFiltered.reduce((s, r) => s + r.amount, 0)).toLocaleString(), "\uC6D0"))),
-  /*#__PURE__*/React.createElement("button", {
-    onClick: () => downloadCsvManagerial(detailFiltered),
-    className: "px-3 py-1.5 rounded-lg text-xs font-medium",
-    style: {
-      background: `${COLOR.gold}15`,
-      border: `1px solid ${COLOR.gold}40`,
-      color: COLOR.gold,
-      cursor: "pointer"
-    }
-  }, "\u2B07 Excel \uB2E4\uC6B4\uB85C\uB4DC")), /*#__PURE__*/React.createElement(PnlDetailTable, {
-    rows: detailFiltered,
-    showOrg: true
-  })));
+  }));
 }
 function SubTab({
   active,
@@ -9014,19 +9005,20 @@ function SubTab({
 }
 
 /* ════════════════ 공통비 배부손익 ════════════════
- * 공통비 정의: 관리손익의 부서명이 Master_인원현황 매핑 헤더 중 하나와 일치하는 행
- *   예: '공통(TVPP)', '공통(CI)', 'CEO Staff', ... (인원현황 시트에 추가하면 자동 인식)
+ * 사용자 정책 (사용자가 직접 시트 정비):
+ *   - 부서명은 Master_인원현황 헤더와 관리손익에서 통일됨
+ *     예: 공통(TVPP), 공통(CI), CEO Staff (공통부서)
+ *         TVPP_xEMS, TVPP_Gridflex, TVPP_ER, TVPP_굿뉴스에너지, TVPP_패리티빌더즈 등 (직접부서)
+ *   - Master_배부설정 A열 = 비용 계정만 (매출은 배부 대상 아님)
  *
- * 배부 로직 (각 공통비 행마다):
- *   1) 인원현황 매핑에서 그 공통부서의 Y 조직 목록
- *   2) 배부설정에서 그 계정과목의 Y 조직 목록
- *   3) 교집합 = 실제 배부 대상 조직
- *   4) 그 행의 거래월 인원으로 비례 배부
- *
- * 직접 귀속:
- *   - 식스티의 xEMS / GF / ER 부서 → 해당 단위
- *   - 굿뉴스에너지 법인 → 굿뉴스에너지
- *   - 패리티빌더즈 법인 → 패리티빌더즈
+ * 동작:
+ *   - 단위 = 부서별 P&L 표에 나오는 비-공통 부서들 (동적으로 발견)
+ *   - 매출 / 조직비용 / 조직OP = 부서별 P&L 집계와 동일
+ *       매출 = 매출 + 영업외수익
+ *       조직비용 = 원가 + 판관비 + 영업외비용
+ *       조직OP = 매출 - 조직비용
+ *   - 배부받은공통비 = 공통부서(인원현황 헤더) × 배부설정 A열에 있는 계정과목의 인원 비례 배부
+ *   - 최종OP = 조직OP - 배부받은공통비
  *
  * 입력:
  *   headcount = { mapping: {공통부서: [Y조직]}, byMonth: {YYYY-MM: {조직: 인원}} }
@@ -9041,51 +9033,40 @@ function PnlAllocationView({
   monthTo,
   periodLabel
 }) {
-  const ALL_UNITS = ["xEMS", "Gridflex", "ER", "굿뉴스에너지", "패리티빌더즈"];
-
-  // 식스티 부서 식별
-  const sixtyDeptOf = r => {
-    const dept = String(r.부서 || "").trim();
-    if (/xEMS/i.test(dept)) return "xEMS";
-    if (/^GF$|Gridflex/i.test(dept)) return "Gridflex";
-    if (/^ER$/i.test(dept)) return "ER";
-    return null;
-  };
-
-  // 단위 결정 (직접 귀속 판단)
-  const unitOf = r => {
-    if (r.entity === "식스티헤르츠") return sixtyDeptOf(r);
-    if (r.entity === "굿뉴스에너지") return "굿뉴스에너지";
-    if (r.entity === "패리티빌더즈") return "패리티빌더즈";
-    return null;
-  };
-
   const [allocResult, summary] = useMemo(() => {
     if (!managerial || managerial.length === 0) {
-      return [null, { 매출: 0, 원가: 0, 판관비: 0, 공통비: 0, 인건비: 0 }];
+      return [null, { 매출통합: 0, 조직비용: 0, 공통비: 0, 최종OP: 0, 미매핑식스티: 0 }];
     }
 
     // 배부설정 룩업: 계정과목 → [Y조직]
     const allocMap = {};
-    (allocConfig || []).forEach(c => {
-      allocMap[c.계정과목] = c.targets || [];
-    });
+    (allocConfig || []).forEach(c => { allocMap[c.계정과목] = c.targets || []; });
 
-    // 인원현황 매핑: 공통부서 → [Y조직]
+    // 인원현황 매핑: 공통부서 → [Y조직] (예: '공통(TVPP)' → [TVPP_xEMS, TVPP_Gridflex, ...])
     const deptMapping = (headcount && headcount.mapping) || {};
+    const commonDepts = new Set(Object.keys(deptMapping)); // 공통부서 이름 집합
 
-    // 단위별 직접 손익 + 배부받은 공통비
+    // 단위(직접부서) 발견: baseFiltered에서 부서 unique, 공통부서 제외, 빈 부서 제외
+    const allDeptsSet = new Set();
+    baseFiltered.forEach(r => {
+      const d = String(r.부서 || "").trim();
+      if (d) allDeptsSet.add(d);
+    });
+    const unitNames = Array.from(allDeptsSet).filter(d => !commonDepts.has(d)).sort();
+
+    // 각 단위의 직접 손익 집계 + 배부받은공통비
     const direct = {};
-    ALL_UNITS.forEach(u => {
+    unitNames.forEach(u => {
       direct[u] = {
         매출: 0, 원가: 0, 판관비: 0, 인건비: 0,
         영업외수익: 0, 영업외비용: 0, 배부받은공통비: 0,
       };
     });
-    const allocDetail = []; // 배부 명세 표용
-    const commonByAccount = {}; // 계정×공통부서별 합계 (요약 표시용)
-    let unmappedSum = 0; // 식스티 데이터인데 부서 매핑도 안 되고 공통도 아닌 것
-    const unmappedDetails = {}; // 디버그용: 부서명×계정과목별 미매핑 누적
+
+    const allocDetail = [];
+    const commonByAccount = {};
+    const unmappedDetails = {};
+    let unmappedSum = 0;
     const recordUnmapped = (r, reason) => {
       unmappedSum += r.amount;
       const dept = String(r.부서 || "").trim() || "(빈 부서)";
@@ -9104,129 +9085,110 @@ function PnlAllocationView({
       const account = r.계정과목 || "";
       const month = r.monthKey || "";
 
-      // 공통부서 매칭:
-      //   1차: 인원현황 mapping의 키와 정확히 일치 ('공통(TVPP)', 'CEO Staff' 등 임의 컬럼)
-      //   2차: normCommonDept 폴백 ('TVPP' → '공통(TVPP)' 같은 변형 케이스)
-      let commonKey = null;
-      if (deptMapping[dept]) {
-        commonKey = dept;
-      } else {
-        const normalized = normCommonDept(dept);
-        if (normalized && deptMapping[normalized]) commonKey = normalized;
-      }
-
-      // 1) 공통부서 행 → 배부 대상
-      if (commonKey) {
-        const fromMapping = deptMapping[commonKey]; // 인원현황에서 Y로 매핑된 조직
-        const fromAlloc = allocMap[account]; // 배부설정에서 Y로 매핑된 조직 (없으면 undefined)
-        // 교집합 (배부설정에 없으면 인원현황 그대로 사용)
-        const targets = fromAlloc && fromAlloc.length > 0
-          ? fromMapping.filter(u => fromAlloc.includes(u))
-          : fromMapping;
-
-        // 인원 비례 배부
-        const weights = targets.map(t => getHeadcountAt(headcount, t, month));
-        const totalW = weights.reduce((s, w) => s + w, 0);
-
-        // 계정×공통부서 누적 (요약용)
-        const accKey = `${commonKey}|${account || "(미지정)"}`;
-        if (!commonByAccount[accKey]) {
-          commonByAccount[accKey] = {
-            공통부서: commonKey,
-            계정과목: account || "(미지정)",
-            금액: 0,
-            targets,
-          };
+      // 1) 공통부서 → 배부 시도
+      if (dept && commonDepts.has(dept)) {
+        // 매출/영업외수익은 공통부서에 있어도 배부 안 함 — 배부설정 A열에 매출 계정은 없음
+        // 그래도 배부설정에 있으면 배부 시도 (사용자 설정 따름)
+        const fromAlloc = allocMap[account];
+        if (!fromAlloc) {
+          recordUnmapped(r, "배부설정 A열에 등록되지 않은 계정과목 → 배부 제외");
+          return;
         }
-        commonByAccount[accKey].금액 += r.amount;
-
+        if (fromAlloc.length === 0) {
+          recordUnmapped(r, "배부설정에 있지만 모든 조직이 N → 배부 제외");
+          return;
+        }
+        const fromMapping = deptMapping[dept];
+        const targets = fromMapping.filter(u => fromAlloc.includes(u));
         if (targets.length === 0) {
-          // 대상 조직 없음 — 미배부로 누적
-          recordUnmapped(r, "공통부서지만 대상 조직 없음 (인원현황/배부설정 매핑 확인)");
+          recordUnmapped(r, `${dept}는 [${fromMapping.join(",")}]에 매핑되고 ${account}는 [${fromAlloc.join(",")}]에 배부되는데 교집합 없음`);
           return;
         }
 
+        const weights = targets.map(t => getHeadcountAt(headcount, t, month));
+        const totalW = weights.reduce((s, w) => s + w, 0);
+
+        const accKey = `${dept}|${account}`;
+        if (!commonByAccount[accKey]) {
+          commonByAccount[accKey] = { 공통부서: dept, 계정과목: account, 금액: 0, targets };
+        }
+        commonByAccount[accKey].금액 += r.amount;
+
         if (totalW === 0) {
-          // 인원 0이면 균등 배부
+          // 인원 0이면 균등 배부 (대상 단위가 direct에 없을 수도 있으니 보정)
           const each = r.amount / targets.length;
           targets.forEach((t, i) => {
+            if (!direct[t]) direct[t] = { 매출: 0, 원가: 0, 판관비: 0, 인건비: 0, 영업외수익: 0, 영업외비용: 0, 배부받은공통비: 0 };
             direct[t].배부받은공통비 += each;
-            allocDetail.push({
-              월: month, 공통부서: commonKey, 계정과목: account,
-              단위: t, 가중치: 0, 비율: 1 / targets.length,
-              금액: each, 원금액: r.amount,
-            });
+            allocDetail.push({ 월: month, 공통부서: dept, 계정과목: account, 단위: t, 가중치: 0, 비율: 1/targets.length, 금액: each, 원금액: r.amount });
           });
         } else {
           targets.forEach((t, i) => {
+            if (!direct[t]) direct[t] = { 매출: 0, 원가: 0, 판관비: 0, 인건비: 0, 영업외수익: 0, 영업외비용: 0, 배부받은공통비: 0 };
             const ratio = weights[i] / totalW;
             const amt = r.amount * ratio;
             direct[t].배부받은공통비 += amt;
-            allocDetail.push({
-              월: month, 공통부서: commonKey, 계정과목: account,
-              단위: t, 가중치: weights[i], 비율: ratio,
-              금액: amt, 원금액: r.amount,
-            });
+            allocDetail.push({ 월: month, 공통부서: dept, 계정과목: account, 단위: t, 가중치: weights[i], 비율: ratio, 금액: amt, 원금액: r.amount });
           });
         }
         return;
       }
 
-      // 2) 직접 귀속
-      const unit = unitOf(r);
-      if (unit) {
-        if (cat === "매출") direct[unit].매출 += r.amount;
-        else if (cat === "원가") direct[unit].원가 += r.amount;
+      // 2) 비-공통부서 (직접 귀속) — 부서별 P&L과 동일한 집계
+      if (dept && direct[dept]) {
+        if (cat === "매출") direct[dept].매출 += r.amount;
+        else if (cat === "원가") direct[dept].원가 += r.amount;
         else if (cat === "판관비") {
-          direct[unit].판관비 += r.amount;
-          if ((r.분류항목 || "").includes("인건비")) direct[unit].인건비 += r.amount;
+          direct[dept].판관비 += r.amount;
+          if ((r.분류항목 || "").includes("인건비")) direct[dept].인건비 += r.amount;
         }
-        else if (cat === "영업외수익") direct[unit].영업외수익 += r.amount;
-        else if (cat === "영업외비용") direct[unit].영업외비용 += r.amount;
-      } else if (r.entity === "식스티헤르츠") {
-        // 식스티인데 부서 매핑 안 되고 공통도 아님
-        recordUnmapped(r, "식스티헤르츠인데 부서가 xEMS/Gridflex/ER 패턴도 아니고 공통부서도 아님");
+        else if (cat === "영업외수익") direct[dept].영업외수익 += r.amount;
+        else if (cat === "영업외비용") direct[dept].영업외비용 += r.amount;
+        return;
+      }
+
+      // 3) 부서 없음 — 미매핑
+      if (!dept) {
+        recordUnmapped(r, "부서명 비어있음");
+      } else {
+        // 비-공통도 아닌데 direct에도 없는 케이스 (이론상 없음)
+        recordUnmapped(r, "부서명 처리 불가");
       }
     });
 
-    // 단위별 최종 손익 계산
+    // 단위별 최종 손익 (배부받은 공통비 때문에 새로 등장한 단위도 포함)
+    const allUnits = Array.from(new Set([...unitNames, ...Object.keys(direct)])).sort();
     const midMonth = monthTo || monthFrom || "";
-    const units = ALL_UNITS.map(u => {
-      const d = direct[u];
-      // 새 구조: 매출=매출+영업외수익 / 조직비용=원가+판관비+영업외비용
+    const units = allUnits.map(u => {
+      const d = direct[u] || { 매출: 0, 원가: 0, 판관비: 0, 인건비: 0, 영업외수익: 0, 영업외비용: 0, 배부받은공통비: 0 };
       const 매출통합 = d.매출 + d.영업외수익;
       const 조직비용 = d.원가 + d.판관비 + d.영업외비용;
-      const 조직OP = 매출통합 - 조직비용;             // 배부 전 (부서별 P&L 결과)
-      const 최종OP = 조직OP - d.배부받은공통비;       // 배부 후
-      // 기존 호환용 필드도 유지
-      const 영업이익전 = d.매출 - d.원가 - d.판관비;
-      const 영업이익후 = 영업이익전 - d.배부받은공통비;
+      const 조직OP = 매출통합 - 조직비용;
+      const 최종OP = 조직OP - d.배부받은공통비;
       return {
         단위: u,
         매출: d.매출, 원가: d.원가, 판관비: d.판관비, 인건비: d.인건비,
         영업외수익: d.영업외수익, 영업외비용: d.영업외비용,
         매출통합, 조직비용, 조직OP, 최종OP,
         배부받은공통비: d.배부받은공통비,
-        영업이익전, 영업이익후,
-        세전이익: 영업이익후 + d.영업외수익 - d.영업외비용,
         인원: getHeadcountAt(headcount, u, midMonth),
       };
     });
 
     const totalCommon = Object.values(commonByAccount).reduce((s, c) => s + c.금액, 0);
     const totals = {
-      매출: units.reduce((s, u) => s + u.매출, 0),
-      원가: units.reduce((s, u) => s + u.원가, 0),
-      판관비: units.reduce((s, u) => s + u.판관비, 0),
-      공통비: totalCommon,
-      인건비: units.reduce((s, u) => s + u.인건비, 0),
-      미매핑식스티: unmappedSum,
-      영업외수익: units.reduce((s, u) => s + u.영업외수익, 0),
-      영업외비용: units.reduce((s, u) => s + u.영업외비용, 0),
       매출통합: units.reduce((s, u) => s + u.매출통합, 0),
       조직비용: units.reduce((s, u) => s + u.조직비용, 0),
       조직OP: units.reduce((s, u) => s + u.조직OP, 0),
+      공통비: totalCommon,
       최종OP: units.reduce((s, u) => s + u.최종OP, 0),
+      미매핑식스티: unmappedSum,
+      매출: units.reduce((s, u) => s + u.매출, 0),
+      원가: units.reduce((s, u) => s + u.원가, 0),
+      판관비: units.reduce((s, u) => s + u.판관비, 0),
+      인건비: units.reduce((s, u) => s + u.인건비, 0),
+      영업외수익: units.reduce((s, u) => s + u.영업외수익, 0),
+      영업외비용: units.reduce((s, u) => s + u.영업외비용, 0),
     };
     return [{
       units, allocDetail,
@@ -9312,7 +9274,7 @@ function PnlAllocationView({
       color: COLOR.textMute,
       marginTop: 2
     }
-  }, "\uC778\uC6D0: ", ALL_UNITS.map(u => `${u} ${getHeadcountAt(headcount, u, monthTo) || 0}`).join(" · ")))), /*#__PURE__*/React.createElement("div", {
+  }, "\uC778\uC6D0: ", allocResult ? allocResult.units.map(u => `${u.단위} ${u.인원 || 0}`).join(" · ") : "(\uB370\uC774\uD130 \uC5C6\uC74C)"))), /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-2 md:grid-cols-4 gap-3 mt-4"
   }, /*#__PURE__*/React.createElement(Card, {
     className: "p-3",
@@ -9443,12 +9405,18 @@ function PnlAllocationView({
     style: { color: COLOR.warn, letterSpacing: "0.12em" }
   }, "\u26A0 \uBBF8\uBC18\uC601 \uB370\uC774\uD130 \uC0C1\uC138 (", allocResult.unmappedDetails.length, "\uAC74)"), /*#__PURE__*/React.createElement("div", {
     className: "text-[11px] mb-3",
-    style: { color: COLOR.textDim, lineHeight: 1.6 }
-  }, "\uC544\ub798 \ud589\ub4e4\uc774 \uc870\uc9c1\u00b7\ubc30\ubd80 \uc5b4\ub514\uc5d0\ub3c4 \uc7a1\ud788\uc9c0 \uc54a\uc558\uc2b5\ub2c8\ub2e4. \ubd80\uc11c\uba85\uc744 \ud655\uc778\ud558\uc5ec ",
-    /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "\uacf5\ud1b5\ubd80\uc11c"),
-    "\ub77c\uba74 Master_\uc778\uc6d0\ud604\ud669 \ud5e4\ub354\uc640 \uc77c\uce58\uc2dc\ud0a4\uace0, ",
-    /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "\uc9c1\uc811\uc870\uc9c1"),
-    "\uc774\ub77c\uba74 xEMS/Gridflex/ER \uc911 \ud558\ub098\uc758 \uc774\ub984\uc73c\ub85c \uc218\uc815\ud558\uc138\uc694."),
+    style: { color: COLOR.textDim, lineHeight: 1.7 }
+  }, /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "\ubc30\ubd80 \uaddc\uce59:"), " \uacf5\ud1b5\ubd80\uc11c \ube44\uc6a9\uc740 ",
+    /*#__PURE__*/React.createElement("b", { style: { color: COLOR.gold } }, "(\ubd80\uc11c\uba85 \u2208 Master_\uc778\uc6d0\ud604\ud669 \ud5e4\ub354) AND (\uacc4\uc815\uacfc\ubaa9 \u2208 Master_\ubc30\ubd80\uc124\uc815 A\uc5f4)"),
+    " \ub458 \ub2e4 \ub9cc\uc871\ud574\uc57c \ubc30\ubd80\ub429\ub2c8\ub2e4.",
+    /*#__PURE__*/React.createElement("br", null),
+    "\u25B8 ",
+    /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "\ubc30\ubd80\uc124\uc815\uc5d0 \uc5c6\ub294 \uacc4\uc815\uacfc\ubaa9"),
+    ": \ubc30\ubd80\uc124\uc815 \uc2dc\ud2b8 A\uc5f4\uc5d0 \uc774 \uacc4\uc815\uc744 \ucd94\uac00\ud558\uace0 \ub300\uc0c1 \uc870\uc9c1\uc744 Y\ub85c \ub9c8\ud0b9\uc11c\uc694.",
+    /*#__PURE__*/React.createElement("br", null),
+    "\u25B8 ",
+    /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "\uc5d0\uc774\uc11c \ud574\ub2f9\ud558\uc9c0 \uc54a\ub294 \ubd80\uc11c\uba85"),
+    " (\uc608: TVPP_Energy Registry): \uc774\uac8c \uacf5\ud1b5\ubd80\uc11c\ub77c\uba74 \uc778\uc6d0\ud604\ud669 \ud5e4\ub354(2\ud589)\uc5d0 \ucd94\uac00, \uc9c1\uc811\uc870\uc9c1\uc774\ub77c\uba74 xEMS/Gridflex/ER \uc774\ub984\uc73c\ub85c \uc218\uc815\ud558\uc138\uc694."),
   /*#__PURE__*/React.createElement("div", {
     className: "rounded-lg overflow-hidden",
     style: { border: `1px solid ${COLOR.warn}30` }
@@ -11852,52 +11820,10 @@ function PnlByOrgView({
     rows: orgPnls,
     totalRow: totalRow,
     dim: dim,
-    onSelect: setSelectedOrg,
-    selected: selectedOrg,
+    onSelect: () => {},
+    selected: null,
     showMonthly: showMonthly,
     months: monthsInRange
-  })), selectedOrg && /*#__PURE__*/React.createElement(Card, {
-    className: "p-5"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center justify-between mb-3 flex-wrap gap-2"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "text-xs uppercase tracking-wider",
-    style: {
-      color: COLOR.textMute,
-      letterSpacing: "0.12em"
-    }
-  }, dim, " \uC0C1\uC138 \u2014 ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: accentColor
-    }
-  }, selectedOrg)), /*#__PURE__*/React.createElement("div", {
-    className: "text-[11px] mt-0.5",
-    style: {
-      color: COLOR.textDim
-    }
-  }, selectedRows.length.toLocaleString(), "\uAC74 \xB7 \uC6D0 \uB2E8\uC704")), /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center gap-2"
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => downloadCsvManagerial(selectedRows),
-    className: "px-3 py-1.5 rounded-lg text-xs font-medium",
-    style: {
-      background: `${COLOR.gold}15`,
-      border: `1px solid ${COLOR.gold}40`,
-      color: COLOR.gold,
-      cursor: "pointer"
-    }
-  }, "\u2B07 Excel"), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setSelectedOrg(null),
-    className: "px-3 py-1.5 rounded-lg text-xs font-medium",
-    style: {
-      background: COLOR.surface,
-      border: `1px solid ${COLOR.border}`,
-      color: COLOR.textDim,
-      cursor: "pointer"
-    }
-  }, "\uB2EB\uAE30 \u2715"))), /*#__PURE__*/React.createElement(PnlDetailTable, {
-    rows: selectedRows,
-    showOrg: true
   })));
 }
 
