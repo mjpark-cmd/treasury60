@@ -697,7 +697,9 @@ const DEFAULT_DRIVE = {
     monthly: 'Master_재무제표(월간)',
     sales: 'Master_매출',
     managerial: 'Master_관리손익',
-    orders: 'Master_수주'
+    orders: 'Master_수주',
+    headcount: 'Master_인원현황',
+    allocConfig: 'Master_배부설정'
   }
 };
 const ADMIN_PASSWORD = '60hz2026'; // 관리자 비밀번호
@@ -1007,36 +1009,38 @@ function parseOrders(text) {
 const ALLOC_TARGETS = ["xEMS", "Gridflex", "ER", "굿뉴스에너지", "패리티빌더즈"];
 function parseAllocConfigMatrix(matrix) {
   if (!matrix.length) return [];
-  // 헤더 행 — '계정과목' 또는 '계정' 포함된 행
+  // 헤더 행 — '계정과목명' / '계정과목' / '계정' 중 하나가 있는 행
   let hrow = -1;
   for (let i = 0; i < Math.min(matrix.length, 5); i++) {
     const cells = (matrix[i] || []).map(v => String(v || "").trim());
-    if (cells.some(c => c === "계정과목" || c === "계정")) {
+    if (cells.some(c => c === "계정과목명" || c === "계정과목" || c === "계정")) {
       hrow = i;
       break;
     }
   }
   if (hrow < 0) return [];
   const headers = matrix[hrow].map(v => String(v || "").trim());
-  const colIdx = {};
-  headers.forEach((h, i) => {
-    colIdx[h] = i;
-  });
-  const accountCol = colIdx["계정과목"] != null ? colIdx["계정과목"] : colIdx["계정"];
-  if (accountCol == null) return [];
-  const targetCols = {};
-  ALLOC_TARGETS.forEach(t => {
-    if (colIdx[t] != null) targetCols[t] = colIdx[t];
-  });
+  // 계정과목 컬럼 인덱스 (3가지 라벨 중 하나)
+  const accountCol = headers.findIndex(h => h === "계정과목명" || h === "계정과목" || h === "계정");
+  if (accountCol < 0) return [];
+  // 단위(배부대상) 컬럼들 — 계정과목 컬럼 다음의 비어있지 않은 헤더 모두를 자동 인식
+  //   ALLOC_TARGETS 하드코딩 제거: 사용자 시트 헤더 (TVPP_xEMS 등) 그대로 사용
+  const targetCols = {}; // {단위명: 컬럼인덱스}
+  for (let c = accountCol + 1; c < headers.length; c++) {
+    const h = headers[c];
+    if (!h) continue;  // 빈 헤더는 스킵 (CSV 끝의 빈 컬럼 등)
+    targetCols[h] = c;
+  }
+  const targetNames = Object.keys(targetCols);
+  if (targetNames.length === 0) return [];
   const rows = [];
   for (let i = hrow + 1; i < matrix.length; i++) {
     const r = matrix[i] || [];
     const account = String(r[accountCol] || "").trim();
     if (!account) continue;
     const targets = [];
-    ALLOC_TARGETS.forEach(t => {
+    targetNames.forEach(t => {
       const colI = targetCols[t];
-      if (colI == null) return;
       const v = String(r[colI] || "").trim().toUpperCase();
       if (v === "Y" || v === "YES" || v === "TRUE" || v === "1" || v === "O") {
         targets.push(t);
@@ -1843,7 +1847,7 @@ function App() {
   const [managerial, setManagerial] = useState([]); // Master_관리손익
   const [orders, setOrders] = useState([]); // Master_수주
   const [allocConfig, setAllocConfig] = useState([]); // Master_배부설정
-  const [headcount, setHeadcount] = useState([]); // Master_인원현황
+  const [headcount, setHeadcount] = useState({ mapping: {}, byMonth: {}, allocationUnits: [] }); // Master_인원현황
   const [tab, setTab] = useState("import");
   const [year, setYear] = useState(null);
   const [entity, setEntity] = useState(CONSOLIDATED);
@@ -1982,8 +1986,16 @@ function App() {
           };
         }
       };
-      const results = await Promise.all([fetchOrError("재무제표(연간)", settings.tabs.annual), fetchOrError("재무제표(월간)", settings.tabs.monthly), fetchOrError("매출", settings.tabs.sales), fetchOrError("관리손익", settings.tabs.managerial), fetchOrError("수주", settings.tabs.orders)]);
-      const [annualR, monthlyR, salesR, managerialR, ordersR] = results;
+      const results = await Promise.all([
+        fetchOrError("재무제표(연간)", settings.tabs.annual),
+        fetchOrError("재무제표(월간)", settings.tabs.monthly),
+        fetchOrError("매출", settings.tabs.sales),
+        fetchOrError("관리손익", settings.tabs.managerial),
+        fetchOrError("수주", settings.tabs.orders),
+        fetchOrError("인원현황", settings.tabs.headcount || "Master_인원현황"),
+        fetchOrError("배부설정", settings.tabs.allocConfig || "Master_배부설정")
+      ]);
+      const [annualR, monthlyR, salesR, managerialR, ordersR, headcountR, allocConfigR] = results;
       // 연간/월간 통합
       const annualRecs = parseFinancialMatrix(annualR.values).map(r => ({
         ...r,
@@ -1999,10 +2011,15 @@ function App() {
       const salesRecs = parseSalesMatrix(salesR.values);
       const managerialRecs = parseManagerialMatrix(managerialR.values);
       const ordersRecs = parseOrdersMatrix(ordersR.values);
+      // 인원현황 + 배부설정 (권한 거부/누락이어도 에러는 별도 카운트 — 핵심 시트 아님)
+      const headcountObj = parseHeadcountMatrix(headcountR.values || []);
+      const allocConfigRecs = parseAllocConfigMatrix(allocConfigR.values || []);
       setFinancial(allFinancial);
       setSales(salesRecs);
       setManagerial(managerialRecs);
       setOrders(ordersRecs);
+      setHeadcount(headcountObj);
+      setAllocConfig(allocConfigRecs);
 
       // 권한 거부된 시트 / 못 찾은 시트 안내
       const permDenied = results.filter(r => r.error && r.error.kind === "permission");
@@ -2163,21 +2180,32 @@ function App() {
         } else if (kind === "allocConfig") {
           const parsed = parseAllocConfig(text);
           if (parsed.length === 0) {
-            alert("Master_배부설정 파일에서 데이터를 찾지 못했습니다.\n헤더에 '계정과목' 그리고 'xEMS', 'Gridflex', 'ER', '굿뉴스에너지', '패리티빌더즈' 컬럼이 있어야 합니다.");
+            alert("Master_배부설정 파일에서 데이터를 찾지 못했습니다.\n시트 구조를 확인하세요:\n• A1: 계정과목명 (또는 계정과목/계정)\n• B1~: 배부대상 단위명 (TVPP_xEMS, TVPP_GridFlex, 굿뉴스에너지 등 — Master_인원현황 B열과 동일)\n• 2행~: 계정과목별 Y/N");
             return;
           }
-          const accountSummary = parsed.length;
+          // 인식된 단위 목록 확인 (첫 행에서)
+          const sampleTargets = parsed.length > 0 && parsed[0]._raw ?
+            Object.keys(parsed.reduce((acc, r) => { r.targets.forEach(t => acc[t] = 1); return acc; }, {})) : [];
           const targetCount = parsed.reduce((s, r) => s + r.targets.length, 0);
-          alert(`Master_배부설정 업로드 완료\n• 계정 ${accountSummary}건 · 총 매핑 ${targetCount}건`);
+          alert(`Master_배부설정 업로드 완료\n• 계정과목 ${parsed.length}건 · 총 매핑 ${targetCount}건\n• 인식된 단위: ${sampleTargets.join(", ") || "(없음)"}`);
           setAllocConfig(parsed);
         } else if (kind === "headcount") {
           const parsed = parseHeadcount(text);
-          if (parsed.length === 0) {
-            alert("Master_인원현황 파일에서 데이터를 찾지 못했습니다.\n헤더에 '단위', '시작월', '종료월', '인원'이 있어야 합니다.");
+          const allocUnits = parsed.allocationUnits || [];
+          const mappingKeys = Object.keys(parsed.mapping || {});
+          const monthCount = Object.keys(parsed.byMonth || {}).length;
+          if (allocUnits.length === 0 && mappingKeys.length === 0) {
+            alert("Master_인원현황 파일에서 데이터를 찾지 못했습니다.\n시트 구조를 확인하세요:\n" +
+              "[상단 매트릭스]\n" +
+              "  B2: 배부대상조직 (라벨)\n" +
+              "  C2~: 공통조직 헤더 (공통(TVPP), 공통(CI) 등)\n" +
+              "  B3~: 단위명 (TVPP_xEMS 등)\n" +
+              "  C3~: Y/N\n" +
+              "[하단 인원]\n" +
+              "  B10: 배부대상조직 / C10: 해당월 / D10: 인원");
             return;
           }
-          const units = [...new Set(parsed.map(r => r.단위))];
-          alert(`Master_인원현황 ${parsed.length}건 업로드 완료\n• 단위: ${units.join(", ")}`);
+          alert(`Master_인원현황 업로드 완료\n• 단위 ${allocUnits.length}개: ${allocUnits.join(", ")}\n• 공통조직 ${mappingKeys.length}개: ${mappingKeys.join(", ")}\n• 월별 인원 ${monthCount}개 월`);
           setHeadcount(parsed);
         }
       } catch (err) {
@@ -2518,7 +2546,7 @@ function App() {
       setManagerial([]);
       setOrders([]);
       setAllocConfig([]);
-      setHeadcount([]);
+      setHeadcount({ mapping: {}, byMonth: {}, allocationUnits: [] });
       setYear(null);
     },
     driveSettings: driveSettings,
@@ -8639,6 +8667,9 @@ function PnlView({
   const [global분류항목, setGlobal분류항목] = useState("전체");
   const [global과목명, setGlobal과목명] = useState("전체");
   const [global계정과목, setGlobal계정과목] = useState("전체");
+  // 공통비 배부 전용 필터 (다른 탭에서는 무시)
+  const [global단위, setGlobal단위] = useState("전체");
+  const [global공통조직, setGlobal공통조직] = useState("전체");
 
   useEffect(() => {
     if (allMonths.length > 0) {
@@ -8654,6 +8685,8 @@ function PnlView({
     setGlobal분류항목("전체");
     setGlobal과목명("전체");
     setGlobal계정과목("전체");
+    setGlobal단위("전체");
+    setGlobal공통조직("전체");
   }, [subTab]);
   if (!managerial || managerial.length === 0) {
     return /*#__PURE__*/React.createElement(Card, {
@@ -8737,6 +8770,17 @@ function PnlView({
       .filter(x => x !== "(미지정)" || baseFiltered.some(r => !r.부서))
       .sort();
   }, [baseFiltered]);
+
+  // 단위/공통조직 목록 (Master_인원현황에서)
+  const 단위List = useMemo(() => {
+    const fromHC = (headcount && headcount.allocationUnits) || [];
+    if (fromHC.length > 0) return fromHC.slice();
+    // 폴백: mapping의 Y조직 합집합
+    const set = new Set();
+    Object.values((headcount && headcount.mapping) || {}).forEach(arr => arr.forEach(o => set.add(o)));
+    return Array.from(set).sort();
+  }, [headcount]);
+  const 공통조직List = useMemo(() => Object.keys((headcount && headcount.mapping) || {}), [headcount]);
 
   // 분류항목 목록 (구분 적용 후)
   const 분류항목List = useMemo(() => {
@@ -8822,7 +8866,7 @@ function PnlView({
       color: COLOR.text
     }
   }, baseFiltered.length.toLocaleString(), "\uAC74"), " \xB7 \uB370\uC774\uD130 \uBC94\uC704 ", minMonth, " ~ ", maxMonth)), /*#__PURE__*/React.createElement("div", {
-    className: "pt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3",
+    className: "pt-3 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2",
     style: {
       borderTop: `1px dashed ${COLOR.gold}30`
     }
@@ -8837,7 +8881,7 @@ function PnlView({
       marginLeft: 4,
       fontSize: 9
     }
-  }, "(\uBD80\uC11C\uBCC4 P&L \uC804\uC6A9)")), /*#__PURE__*/React.createElement("select", {
+  }, "(\uBD80\uC11C\uBCC4 P&L)")), /*#__PURE__*/React.createElement("select", {
     value: global부서,
     onChange: e => setGlobal부서(e.target.value),
     style: selectStyle,
@@ -8847,7 +8891,33 @@ function PnlView({
   }, "\uC804\uCCB4 (", 부서List.length, "\uAC1C)"), 부서List.map(d => /*#__PURE__*/React.createElement("option", {
     key: d,
     value: d
-  }, d)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+  }, d)))),
+  /* 단위 (공통비 배부 전용) */
+  /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "text-[10px] block mb-1",
+    style: { color: COLOR.textMute }
+  }, "\uB2E8\uC704 ", /*#__PURE__*/React.createElement("span", {
+    style: { color: COLOR.textDim, marginLeft: 4, fontSize: 9 }
+  }, "(\uBC30\uBD80\uC190\uC775)")), /*#__PURE__*/React.createElement("select", {
+    value: global단위,
+    onChange: e => setGlobal단위(e.target.value),
+    style: selectStyle,
+    className: "w-full"
+  }, /*#__PURE__*/React.createElement("option", { value: "\uC804\uCCB4" }, "\uC804\uCCB4 (", 단위List.length, "\uAC1C)"),
+     단위List.map(u => /*#__PURE__*/React.createElement("option", { key: u, value: u }, u)))),
+  /* 공통조직 (공통비 배부 전용) */
+  /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "text-[10px] block mb-1",
+    style: { color: COLOR.textMute }
+  }, "\uACF5\uD1B5\uC870\uC9C1 ", /*#__PURE__*/React.createElement("span", {
+    style: { color: COLOR.textDim, marginLeft: 4, fontSize: 9 }
+  }, "(\uBC30\uBD80\uC190\uC775)")), /*#__PURE__*/React.createElement("select", {
+    value: global공통조직,
+    onChange: e => setGlobal공통조직(e.target.value),
+    style: selectStyle,
+    className: "w-full"
+  }, /*#__PURE__*/React.createElement("option", { value: "\uC804\uCCB4" }, "\uC804\uCCB4 (", 공통조직List.length, "\uAC1C)"),
+     공통조직List.map(c => /*#__PURE__*/React.createElement("option", { key: c, value: c }, c)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     className: "text-[10px] block mb-1",
     style: {
       color: COLOR.textMute
@@ -9015,7 +9085,9 @@ function PnlView({
     headcount: headcount,
     monthFrom: monthFrom,
     monthTo: monthTo,
-    periodLabel: `${monthFrom}~${monthTo}`
+    periodLabel: `${monthFrom}~${monthTo}`,
+    filter단위: global단위,
+    filter공통조직: global공통조직
   }),
   /* 부서별 P&L 서브탭 — 분류 필터(부서/대분류/중분류/계정과목/세목 중 하나) 활성 시 하단 상세 거래내역 */
   subTab === "department" && detailOnlyActive && /*#__PURE__*/React.createElement(Card, {
@@ -9116,7 +9188,9 @@ function PnlAllocationView({
   headcount,
   monthFrom,
   monthTo,
-  periodLabel
+  periodLabel,
+  filter단위,
+  filter공통조직
 }) {
   const [allocResult, summary] = useMemo(() => {
     if (!managerial || managerial.length === 0) {
@@ -9134,10 +9208,25 @@ function PnlAllocationView({
 
     // 단위 목록 (Master_인원현황 B열 순서)
     let unitNames = ((headcount && headcount.allocationUnits) || []).slice();
+    // 폴백 1: 옛 형식(allocationUnits 없음) — mapping의 모든 Y조직 합집합
     if (unitNames.length === 0 && commonDeptList.length > 0) {
       const set = new Set();
       Object.values(deptMapping).forEach(arr => arr.forEach(o => set.add(o)));
       unitNames = Array.from(set);
+    }
+    // 폴백 2: 인원현황이 아예 안 들어왔음 — baseFiltered에서 비공통 부서 unique + 법인명
+    if (unitNames.length === 0) {
+      const set = new Set();
+      baseFiltered.forEach(r => {
+        const d = String(r.부서 || "").trim();
+        if (d && !commonDeptSet.has(d)) set.add(d);
+      });
+      // 빈 부서지만 법인이 있는 케이스는 entity 추가 (굿뉴스/패리티 등)
+      const entitiesUsed = new Set(baseFiltered.map(r => r.entity).filter(Boolean));
+      entitiesUsed.forEach(e => {
+        if (e !== "식스티헤르츠") set.add(e); // 식스티는 부서로 갈리니까 제외
+      });
+      unitNames = Array.from(set).sort();
     }
 
     // 각 단위의 직접 손익 + 공통조직별 배부받은 금액
@@ -9152,13 +9241,34 @@ function PnlAllocationView({
     // 미매핑 누적
     const unmappedDetails = {};
     let unmappedSum = 0;
+    const allocDetail = []; // 단위×공통조직 명세 (월, 계정과목, 원금액, 인원, 비율, 배부금액)
+    // 법인 별칭 — 미국법인 등 자회사를 한국 본법인의 단위로 합산
+    //   예: Goodnews Energy US → 굿뉴스에너지 단위에 합산
+    const ENTITY_ALIASES = {
+      "Goodnews Energy US": "굿뉴스에너지"
+    };
+    // entity → 단위(direct의 키)로 해석
+    const resolveUnit = e => {
+      if (!e) return null;
+      if (direct[e]) return e;
+      const aliased = ENTITY_ALIASES[e];
+      if (aliased && direct[aliased]) return aliased;
+      return null;
+    };
+    // 미반영 표시 제외 규칙:
+    //   - 식스티헤르츠 법인이 아닌 거래 (공통비 대상은 식스티만)
+    //   - 의도적으로 배부 대상에서 뺀 일반 비용 계정 ("기타 매출원가" 등)
+    const UNMAPPED_SKIP_ACCOUNTS = new Set(["기타 매출원가", "기타매출원가"]);
     const recordUnmapped = (r, reason) => {
+      if (r.entity !== "식스티헤르츠") return;  // 식스티 외 법인은 표시 안 함
+      const account = r.계정과목 || "";
+      if (UNMAPPED_SKIP_ACCOUNTS.has(account)) return;
       unmappedSum += r.amount;
       const dept = String(r.부서 || "").trim() || "(빈 부서)";
-      const account = r.계정과목 || "(미지정)";
-      const key = `${dept}||${account}||${r.entity}`;
+      const accountLabel = account || "(미지정)";
+      const key = `${dept}||${accountLabel}||${r.entity}`;
       if (!unmappedDetails[key]) {
-        unmappedDetails[key] = { 부서: dept, entity: r.entity, 계정과목: account, 금액: 0, 건수: 0, 이유: reason };
+        unmappedDetails[key] = { 부서: dept, entity: r.entity, 계정과목: accountLabel, 금액: 0, 건수: 0, 이유: reason };
       }
       unmappedDetails[key].금액 += r.amount;
       unmappedDetails[key].건수 += 1;
@@ -9189,20 +9299,62 @@ function PnlAllocationView({
         }
         const weights = targets.map(t => getHeadcountAt(headcount, t, month));
         const totalW = weights.reduce((s, w) => s + w, 0);
-        if (totalW === 0) {
-          const each = r.amount / targets.length;
-          targets.forEach(t => {
-            if (!direct[t]) direct[t] = initDirect();
-            if (direct[t].byCommon[dept] == null) direct[t].byCommon[dept] = 0;
-            direct[t].byCommon[dept] += each;
-          });
-        } else {
-          targets.forEach((t, i) => {
-            if (!direct[t]) direct[t] = initDirect();
-            if (direct[t].byCommon[dept] == null) direct[t].byCommon[dept] = 0;
-            direct[t].byCommon[dept] += r.amount * weights[i] / totalW;
-          });
+
+        // 끝전 보정 — Largest Remainder Method
+        //   원금액 정수화 → 각 단위 floor 배부 → 잔여를 소수부 큰 순서로 1원씩
+        //   결과 합계 = round(r.amount) 항상 정확히 일치
+        const sign = r.amount >= 0 ? 1 : -1;
+        const absA = Math.round(Math.abs(r.amount));
+        const allocated = targets.map(() => 0);
+        if (absA > 0) {
+          if (totalW === 0) {
+            // 균등 분배 (모든 단위의 인원 0)
+            const each = Math.floor(absA / targets.length);
+            let leftover = absA - each * targets.length;
+            targets.forEach((_, i) => {
+              allocated[i] = each + (i < leftover ? 1 : 0);
+            });
+          } else {
+            // 가중치(인원) 비례 — LRM
+            const exact = weights.map(w => absA * w / totalW);
+            const floored = exact.map(e => Math.floor(e));
+            const rem = exact.map((e, i) => e - floored[i]);
+            let leftover = absA - floored.reduce((s, a) => s + a, 0);
+            const sortedIdx = rem.map((rv, i) => ({ rv, i }))
+              .sort((a, b) => b.rv - a.rv)
+              .map(x => x.i);
+            for (let k = 0; k < leftover; k++) {
+              floored[sortedIdx[k % targets.length]] += 1;
+            }
+            floored.forEach((v, i) => { allocated[i] = v; });
+          }
         }
+
+        targets.forEach((t, i) => {
+          if (!direct[t]) direct[t] = initDirect();
+          if (direct[t].byCommon[dept] == null) direct[t].byCommon[dept] = 0;
+          const amt = allocated[i] * sign;
+          if (amt === 0) return;
+          // 영업외수익/매출(수익성) → byCommon에 음수로 누적 (단위가 받는 환원 효과)
+          // 원가/판관비/영업외비용(비용성) → byCommon에 양수로 누적 (단위가 부담)
+          // 결과: byCommon[공통조직] = 그 공통조직의 (비용 합 − 수익 합) = 순 배부액
+          const isIncome = cat === "영업외수익" || cat === "매출";
+          const effect = isIncome ? -amt : amt;
+          direct[t].byCommon[dept] += effect;
+          allocDetail.push({
+            월: month,
+            단위: t,
+            공통조직: dept,
+            계정과목: account,
+            구분: cat,
+            원금액: r.amount,
+            내인원: weights[i],
+            총인원: totalW,
+            비율: totalW > 0 ? weights[i] / totalW : 1 / targets.length,
+            배부금액: amt,
+            배부효과: effect, // 부호 적용 후 (음수 = 단위 환원, 양수 = 단위 부담)
+          });
+        });
         return;
       }
 
@@ -9219,9 +9371,10 @@ function PnlAllocationView({
         addCat(dept);
         return;
       }
-      // 법인 매칭 (굿뉴스에너지, 패리티빌더즈)
-      if (r.entity && direct[r.entity]) {
-        addCat(r.entity);
+      // 법인 매칭 (굿뉴스에너지, 패리티빌더즈) — 별칭 포함 (Goodnews Energy US → 굿뉴스에너지)
+      const matchedUnit = resolveUnit(r.entity);
+      if (matchedUnit) {
+        addCat(matchedUnit);
         return;
       }
       // 미매핑
@@ -9262,23 +9415,55 @@ function PnlAllocationView({
     };
 
     return [{
-      units, commonDeptList,
+      units, commonDeptList, allocDetail,
       unmappedDetails: Object.values(unmappedDetails).sort((a, b) => Math.abs(b.금액) - Math.abs(a.금액)),
     }, totals];
   }, [managerial, baseFiltered, allocConfig, headcount, monthFrom, monthTo]);
 
   if (!allocResult || allocResult.units.length === 0) {
+    // 현재 headcount 상태 진단
+    const mappingKeys = Object.keys((headcount && headcount.mapping) || {});
+    const allocUnits = (headcount && headcount.allocationUnits) || [];
+    const byMonthKeys = Object.keys((headcount && headcount.byMonth) || {});
     return /*#__PURE__*/React.createElement(Card, {
-      className: "p-8 text-center",
+      className: "p-6",
       style: { background: `${COLOR.warn}06`, borderColor: `${COLOR.warn}40` }
-    }, /*#__PURE__*/React.createElement("div", { className: "text-4xl mb-3" }, "\u26A0\uFE0F"),
-       /*#__PURE__*/React.createElement("div", { className: "text-base font-bold mb-2", style: { color: COLOR.warn } }, "\uB2E8\uC704 \uBAA9\uB85D\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4"),
-       /*#__PURE__*/React.createElement("div", { className: "text-[12px]", style: { color: COLOR.textDim, lineHeight: 1.7, maxWidth: 500, margin: "0 auto" } },
-         "Master_\uC778\uC6D0\ud604\ud669 \uc2dc\ud2b8\uc758 ",
-         /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "B\uc5f4(\ubc30\ubd80\ub300\uc0c1\uc870\uc9c1)"),
-         "\uc5d0 \ub2e8\uc704\uba85(TVPP_xEMS, \uad7f\ub274\uc2a4\uc5d0\ub108\uc9c0 \ub4f1)\uc744 \uc785\ub825\ud55c \ud6c4 ",
-         /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "\ub3d9\uae30\ud654"),
-         "\ud574\uc8fc\uc138\uc694."));
+    },
+      /*#__PURE__*/React.createElement("div", { className: "text-center mb-4" },
+        /*#__PURE__*/React.createElement("div", { className: "text-4xl mb-3" }, "\u26A0\uFE0F"),
+        /*#__PURE__*/React.createElement("div", { className: "text-base font-bold mb-2", style: { color: COLOR.warn } }, "\uB2E8\uC704 \uBAA9\uB85D\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4")),
+      /*#__PURE__*/React.createElement("div", { className: "text-[12px] mb-4", style: { color: COLOR.textDim, lineHeight: 1.8, maxWidth: 640, margin: "0 auto", textAlign: "left" } },
+        /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "\uD574\uACB0 \uBC29\uBC95"),
+        /*#__PURE__*/React.createElement("ol", { style: { marginLeft: 16, marginTop: 8 } },
+          /*#__PURE__*/React.createElement("li", null, "\uC0C1\uB2E8 ", /*#__PURE__*/React.createElement("b", { style: { color: COLOR.gold } }, "\uB370\uC774\uD130 \uAC00\uC838\uC624\uAE30"), " \uD0ED\uC744 \uD074\uB9AD"),
+          /*#__PURE__*/React.createElement("li", null, "Google Sheets \uB610\uB294 CSV\uC5D0\uC11C ", /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "Master_\uC778\uC6D0\ud604\ud669"), " \uB2E4\uC2DC \ub3d9\uae30\ud654 (\u26A0 \uc774\uc804 \ucea0\uc2dc\uac00 \uc62c \ud30c\uc11c \uacb0\uacfc\uc77c \uc218 \uc788\uc74c)"),
+          /*#__PURE__*/React.createElement("li", null, "\uC2DC\uD2B8 ", /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "B\uC5F4"), "\uC5D0 \uB2E8\uC704\uBA85(TVPP_xEMS, \uad7f\ub274\uc2a4\uc5d0\ub108\uc9c0 \ub4f1), ", /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "B2\uC140"), "\uC740 ", /*#__PURE__*/React.createElement("code", { style: { background: COLOR.surfaceEl, padding: "1px 6px", borderRadius: 3 } }, "\ubc30\ubd80\ub300\uc0c1\uc870\uc9c1"), " (\ub610\ub294 \ubc30\ubd80\uc870\uc9c1)"),
+          /*#__PURE__*/React.createElement("li", null, "\uB2E4\uC2DC \uC774 \uD0ED \uD655\uC778"))),
+      /*#__PURE__*/React.createElement("div", { className: "rounded-lg p-3", style: { background: COLOR.surface, border: `1px solid ${COLOR.border}`, maxWidth: 640, margin: "0 auto" } },
+        /*#__PURE__*/React.createElement("div", { className: "text-[10px] uppercase tracking-wider mb-2", style: { color: COLOR.textMute, letterSpacing: "0.12em" } }, "\ud604\uc7ac \uc778\uc6d0\ud604\ud669 \ud30c\uc2f1 \uc0c1\ud0dc"),
+        /*#__PURE__*/React.createElement("div", { className: "text-[11px]", style: { fontFamily: MONO, color: COLOR.textDim, lineHeight: 1.8 } },
+          /*#__PURE__*/React.createElement("div", null,
+            "B\uc5f4 \ub2e8\uc704 (allocationUnits): ",
+            /*#__PURE__*/React.createElement("b", { style: { color: allocUnits.length > 0 ? COLOR.success : COLOR.danger } },
+              allocUnits.length, "\uac1c"),
+            allocUnits.length > 0 ? ` \u2014 ${allocUnits.join(", ")}` : ""),
+          /*#__PURE__*/React.createElement("div", null,
+            "\uacf5\ud1b5\uc870\uc9c1 \ud5e4\ub354 (mapping): ",
+            /*#__PURE__*/React.createElement("b", { style: { color: mappingKeys.length > 0 ? COLOR.success : COLOR.danger } },
+              mappingKeys.length, "\uac1c"),
+            mappingKeys.length > 0 ? ` \u2014 ${mappingKeys.join(", ")}` : ""),
+          /*#__PURE__*/React.createElement("div", null,
+            "\uc6d4\ubcc4 \uc778\uc6d0 (byMonth): ",
+            /*#__PURE__*/React.createElement("b", { style: { color: byMonthKeys.length > 0 ? COLOR.success : COLOR.danger } },
+              byMonthKeys.length, "\uac1c \uc6d4"),
+            byMonthKeys.length > 0 ? ` \u2014 ${byMonthKeys.slice(0, 3).join(", ")}${byMonthKeys.length > 3 ? "..." : ""}` : ""),
+          /*#__PURE__*/React.createElement("div", { style: { marginTop: 6, color: allocUnits.length === 0 && mappingKeys.length === 0 ? COLOR.danger : COLOR.warn, fontStyle: "italic" } },
+            allocUnits.length === 0 && mappingKeys.length === 0
+              ? "\u2192 \uc778\uc6d0\ud604\ud669\uc774 \uc804\ud600 \ub85c\ub4dc\ub418\uc9c0 \uc54a\uc558\uc2b5\ub2c8\ub2e4. \ub3d9\uae30\ud654 \uc790\uccb4\uac00 \uc548 \ub41c \uac83 \uac19\uc544\uc694."
+              : allocUnits.length === 0
+                ? "\u2192 \uacf5\ud1b5\uc870\uc9c1\uc740 \uc778\uc2dd\ub418\uc5c8\uc73c\ub098 B\uc5f4(\ub2e8\uc704 \ubaa9\ub85d)\uc774 \ube44\uc5b4\uc788\uc2b5\ub2c8\ub2e4."
+                : "\u2192 \uc54c \uc218 \uc5c6\ub294 \uc0c1\ud0dc")))
+    );
   }
 
   const { units, commonDeptList, unmappedDetails } = allocResult;
@@ -9355,8 +9540,18 @@ function PnlAllocationView({
                 /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: COLOR.danger } }, fmtN(u.영업외비용)),
                 /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: COLOR.danger, fontWeight: 600, background: `${COLOR.danger}06` } }, fmtN(u.조직비용)),
                 /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: u.조직OP >= 0 ? COLOR.success : COLOR.danger, fontWeight: 700, background: `${COLOR.gold}08` } }, fmtN(u.조직OP)),
-                ...commonDeptList.map(c => /*#__PURE__*/React.createElement("td", { key: c, style: { ...tdBase, color: COLOR.purple, background: `${COLOR.purple}04` } }, (u.byCommon[c] || 0) > 0 ? "\u2212" + fmtN(u.byCommon[c]) : "0")),
-                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: COLOR.purple, fontWeight: 700, background: `${COLOR.purple}10` } }, u.배부비용 > 0 ? "\u2212" + fmtN(u.배부비용) : "0"),
+                ...commonDeptList.map(c => {
+                  const v = u.byCommon[c] || 0;
+                  const display = v > 0 ? "\u2212" + fmtN(v) : v < 0 ? "+" + fmtN(-v) : "0";
+                  const color = v > 0 ? COLOR.danger : v < 0 ? COLOR.success : COLOR.textMute;
+                  return /*#__PURE__*/React.createElement("td", { key: c, style: { ...tdBase, color, background: `${COLOR.purple}04` } }, display);
+                }),
+                (() => {
+                  const v = u.배부비용;
+                  const display = v > 0 ? "\u2212" + fmtN(v) : v < 0 ? "+" + fmtN(-v) : "0";
+                  const color = v > 0 ? COLOR.danger : v < 0 ? COLOR.success : COLOR.textMute;
+                  return /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color, fontWeight: 700, background: `${COLOR.purple}10` } }, display);
+                })(),
                 /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: u.최종OP >= 0 ? COLOR.success : COLOR.danger, fontWeight: 700, background: u.최종OP >= 0 ? `${COLOR.gold}12` : `${COLOR.danger}10` } }, fmtN(u.최종OP))))),
             /*#__PURE__*/React.createElement("tfoot", null,
               /*#__PURE__*/React.createElement("tr", { style: { background: `${COLOR.gold}10`, borderTop: `2px solid ${COLOR.gold}50` } },
@@ -9370,9 +9565,89 @@ function PnlAllocationView({
                 /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700, color: COLOR.danger } }, fmtN(summary.영업외비용)),
                 /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700, color: COLOR.danger, background: `${COLOR.danger}10` } }, fmtN(summary.조직비용)),
                 /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700, color: summary.조직OP >= 0 ? COLOR.success : COLOR.danger, background: `${COLOR.gold}12` } }, fmtN(summary.조직OP)),
-                ...commonDeptList.map(c => /*#__PURE__*/React.createElement("td", { key: c, style: { ...tdBase, fontWeight: 700, color: COLOR.purple, background: `${COLOR.purple}08` } }, (summary.byCommon[c] || 0) > 0 ? "\u2212" + fmtN(summary.byCommon[c]) : "0")),
-                /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700, color: COLOR.purple, background: `${COLOR.purple}15` } }, summary.배부비용 > 0 ? "\u2212" + fmtN(summary.배부비용) : "0"),
+                ...commonDeptList.map(c => {
+                  const v = summary.byCommon[c] || 0;
+                  const display = v > 0 ? "\u2212" + fmtN(v) : v < 0 ? "+" + fmtN(-v) : "0";
+                  const color = v > 0 ? COLOR.danger : v < 0 ? COLOR.success : COLOR.textMute;
+                  return /*#__PURE__*/React.createElement("td", { key: c, style: { ...tdBase, fontWeight: 700, color, background: `${COLOR.purple}08` } }, display);
+                }),
+                (() => {
+                  const v = summary.배부비용;
+                  const display = v > 0 ? "\u2212" + fmtN(v) : v < 0 ? "+" + fmtN(-v) : "0";
+                  const color = v > 0 ? COLOR.danger : v < 0 ? COLOR.success : COLOR.textMute;
+                  return /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700, color, background: `${COLOR.purple}15` } }, display);
+                })(),
                 /*#__PURE__*/React.createElement("td", { style: { ...tdBase, fontWeight: 700, color: summary.최종OP >= 0 ? COLOR.success : COLOR.danger, background: summary.최종OP >= 0 ? `${COLOR.gold}18` : `${COLOR.danger}15` } }, fmtN(summary.최종OP)))))))),
+
+    // ── 단위/공통조직 명세 카드 (글로벌 필터 활성 시) ──
+    (filter단위 && filter단위 !== "전체") || (filter공통조직 && filter공통조직 !== "전체") ?
+      (() => {
+        const detail = (allocResult.allocDetail || []).filter(d =>
+          (!filter단위 || filter단위 === "전체" || d.단위 === filter단위) &&
+          (!filter공통조직 || filter공통조직 === "전체" || d.공통조직 === filter공통조직)
+        );
+        const sumAlloc = detail.reduce((s, d) => s + d.배부금액, 0);
+        const filterLabel = [
+          filter단위 && filter단위 !== "전체" ? `단위: ${filter단위}` : null,
+          filter공통조직 && filter공통조직 !== "전체" ? `공통조직: ${filter공통조직}` : null
+        ].filter(Boolean).join(" · ");
+        return /*#__PURE__*/React.createElement(Card, { className: "p-5", style: { background: `${COLOR.purple}06`, borderColor: `${COLOR.purple}40` } },
+          /*#__PURE__*/React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2 mb-3" },
+            /*#__PURE__*/React.createElement("div", null,
+              /*#__PURE__*/React.createElement("div", { className: "text-xs uppercase tracking-wider", style: { color: COLOR.purple, letterSpacing: "0.12em", fontWeight: 700 } }, "\u25B8 \uBC30\uBD80 \uBA85\uC138"),
+              /*#__PURE__*/React.createElement("div", { className: "text-[11px] mt-1", style: { color: COLOR.textDim } }, filterLabel),
+              /*#__PURE__*/React.createElement("div", { className: "text-[11px] mt-0.5", style: { color: COLOR.textDim } },
+                detail.length, "\uAC74 \xB7 \uBC30\uBD80 \uD569\uACC4 ",
+                /*#__PURE__*/React.createElement("b", { style: { color: COLOR.purple, fontFamily: MONO } }, fmtN(sumAlloc), "\uC6D0"))),
+            detail.length > 0 && /*#__PURE__*/React.createElement("button", {
+              onClick: () => {
+                const headers = ["월", "단위", "공통조직", "계정과목", "구분", "원금액", "내인원", "총인원", "비율(%)", "배부금액", "배부효과(+부담/-환원)"];
+                const rows = detail.map(d => [
+                  d.월, d.단위, d.공통조직, d.계정과목, d.구분 || "",
+                  Math.round(d.원금액), d.내인원, d.총인원,
+                  Number((d.비율 * 100).toFixed(2)),
+                  Math.round(d.배부금액),
+                  Math.round(d.배부효과 != null ? d.배부효과 : d.배부금액)
+                ]);
+                downloadExcel(`배부명세_${filterLabel.replace(/[^\w가-힣]+/g, "_")}_${new Date().toISOString().slice(0,10)}.xlsx`, headers, rows, "배부명세");
+              },
+              className: "px-3 py-1.5 rounded-lg text-xs font-medium",
+              style: { background: `${COLOR.purple}15`, border: `1px solid ${COLOR.purple}40`, color: COLOR.purple, cursor: "pointer" }
+            }, "\u2B07 Excel \uB2E4\uC6B4\uB85C\uB4DC")),
+          detail.length === 0 ?
+            /*#__PURE__*/React.createElement("div", { className: "text-center py-6 text-[12px]", style: { color: COLOR.textMute } }, "\uD574\uB2F9 \uC870\uAC74\uC758 \uBC30\uBD80 \uB0B4\uC5ED\uC774 \uC5C6\uC2B5\uB2C8\uB2E4")
+            : /*#__PURE__*/React.createElement("div", { className: "rounded-lg overflow-hidden", style: { border: `1px solid ${COLOR.border}` } },
+                /*#__PURE__*/React.createElement("div", { className: "overflow-auto", style: { maxHeight: 480 } },
+                  /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse" } },
+                    /*#__PURE__*/React.createElement("thead", { style: { position: "sticky", top: 0, background: COLOR.surfaceEl, zIndex: 1 } },
+                      /*#__PURE__*/React.createElement("tr", { style: { borderBottom: `1px solid ${COLOR.borderHi}` } },
+                        /*#__PURE__*/React.createElement("th", { style: { ...thBase, textAlign: "left" } }, "\uC6D4"),
+                        /*#__PURE__*/React.createElement("th", { style: { ...thBase, textAlign: "left" } }, "\uB2E8\uC704"),
+                        /*#__PURE__*/React.createElement("th", { style: { ...thBase, textAlign: "left" } }, "\uACF5\uD1B5\uC870\uC9C1"),
+                        /*#__PURE__*/React.createElement("th", { style: { ...thBase, textAlign: "left" } }, "\uACC4\uC815\uACFC\uBAA9"),
+                        /*#__PURE__*/React.createElement("th", { style: { ...thBase, textAlign: "center" } }, "\uAD6C\uBD84"),
+                        /*#__PURE__*/React.createElement("th", { style: thBase }, "\uC6D0\uAE08\uC561"),
+                        /*#__PURE__*/React.createElement("th", { style: { ...thBase, textAlign: "center" } }, "\uB0B4\uC778\uC6D0/\uCD1D"),
+                        /*#__PURE__*/React.createElement("th", { style: thBase }, "\uBE44\uC728"),
+                        /*#__PURE__*/React.createElement("th", { style: { ...thBase, color: COLOR.purple, fontWeight: 700 } }, "\uBC30\uBD80\uD6A8\uACFC"))),
+                    /*#__PURE__*/React.createElement("tbody", null,
+                      detail.sort((a,b) => a.월.localeCompare(b.월) || a.계정과목.localeCompare(b.계정과목)).map((d, k) => {
+                        const eff = d.배부효과 != null ? d.배부효과 : d.배부금액;
+                        const effDisplay = eff > 0 ? "\u2212" + fmtN(eff) : eff < 0 ? "+" + fmtN(-eff) : "0";
+                        const effColor = eff > 0 ? COLOR.danger : eff < 0 ? COLOR.success : COLOR.textMute;
+                        const isIncomeCat = d.구분 === "영업외수익" || d.구분 === "매출";
+                        return /*#__PURE__*/React.createElement("tr", { key: k, style: { borderBottom: `1px dashed ${COLOR.border}` } },
+                          /*#__PURE__*/React.createElement("td", { style: { ...tdLeft, color: COLOR.textDim, fontFamily: MONO, fontSize: 10 } }, d.월),
+                          /*#__PURE__*/React.createElement("td", { style: { ...tdLeft, fontWeight: 500 } }, d.단위),
+                          /*#__PURE__*/React.createElement("td", { style: { ...tdLeft, color: COLOR.purple } }, d.공통조직),
+                          /*#__PURE__*/React.createElement("td", { style: tdLeft }, d.계정과목),
+                          /*#__PURE__*/React.createElement("td", { style: { ...tdBase, textAlign: "center", fontSize: 10, color: isIncomeCat ? COLOR.success : COLOR.danger } }, d.구분 || ""),
+                          /*#__PURE__*/React.createElement("td", { style: tdBase }, fmtN(d.원금액)),
+                          /*#__PURE__*/React.createElement("td", { style: { ...tdBase, textAlign: "center", color: COLOR.textDim } }, `${d.내인원}/${d.총인원}`),
+                          /*#__PURE__*/React.createElement("td", { style: tdBase }, (d.비율 * 100).toFixed(1) + "%"),
+                          /*#__PURE__*/React.createElement("td", { style: { ...tdBase, color: effColor, fontWeight: 600 } }, effDisplay));
+                      }))))));
+      })() : null,
 
     // ── 미반영 데이터 표 ──
     unmappedDetails.length > 0 && /*#__PURE__*/React.createElement(Card, { className: "p-5", style: { background: `${COLOR.warn}06`, borderColor: `${COLOR.warn}40` } },
@@ -11363,7 +11638,7 @@ function ImportView({
     kind: "headcount",
     title: "Master_\uC778\uC6D0\uD604\uD669",
     subtitle: "\uC2DC\uAE30\uBCC4 \uB2E8\uC704 \uC778\uC6D0 \xB7 \uBC30\uBD80 \uAC00\uC911\uCE58",
-    fileCount: headcount.length,
+    fileCount: (headcount && headcount.allocationUnits ? headcount.allocationUnits.length : 0),
     busy: busy === "headcount",
     error: lastErr && lastErr.kind === "headcount" ? lastErr.msg : null,
     onFile: f => handleFile(f, "headcount"),
