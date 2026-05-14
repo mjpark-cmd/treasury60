@@ -1073,7 +1073,7 @@ function parseHeadcountMatrix(matrix) {
   let mapHeaderRow = -1;
   for (let i = 0; i < Math.min(matrix.length, 10); i++) {
     const cells = (matrix[i] || []).map(v => String(v || "").trim());
-    if (cells.some(c => c === "배부조직")) {
+    if (cells.some(c => c === "배부조직" || c === "배부대상조직")) {
       mapHeaderRow = i;
       break;
     }
@@ -1083,7 +1083,7 @@ function parseHeadcountMatrix(matrix) {
   const allocationUnits = []; // B열에 적힌 배부대상 (조직명 또는 법인명) 순서 유지
   if (mapHeaderRow >= 0) {
     const headers = (matrix[mapHeaderRow] || []).map(v => String(v || "").trim());
-    const orgCol = headers.findIndex(h => h === "배부조직");
+    const orgCol = headers.findIndex(h => h === "배부조직" || h === "배부대상조직");
     // 배부조직 컬럼 우측의 모든 헤더 = 공통부서 (패턴 무관)
     // 빈 헤더 만나면 stop (그 이후는 무관한 데이터일 가능성)
     const commonCols = [];
@@ -1108,11 +1108,12 @@ function parseHeadcountMatrix(matrix) {
     }
   }
 
-  // 2) 하단 월별 인원 헤더 찾기 — '조직' + '해당월' + '인원' 셋이 있는 행
+  // 2) 하단 월별 인원 헤더 찾기 — '조직'(또는 '배부대상조직') + '해당월' + '인원' 셋이 있는 행
   let hcHeaderRow = -1;
   for (let i = mapHeaderRow + 1; i < matrix.length; i++) {
     const cells = (matrix[i] || []).map(v => String(v || "").trim());
-    if (cells.includes("조직") && cells.includes("해당월") && cells.includes("인원")) {
+    const hasOrg = cells.includes("조직") || cells.includes("배부대상조직");
+    if (hasOrg && cells.includes("해당월") && cells.includes("인원")) {
       hcHeaderRow = i;
       break;
     }
@@ -1121,7 +1122,7 @@ function parseHeadcountMatrix(matrix) {
   const byMonth = {};
   if (hcHeaderRow >= 0) {
     const headers = (matrix[hcHeaderRow] || []).map(v => String(v || "").trim());
-    const orgCol = headers.indexOf("조직");
+    const orgCol = headers.findIndex(h => h === "조직" || h === "배부대상조직");
     const monthCol = headers.indexOf("해당월");
     const cntCol = headers.indexOf("인원");
     for (let i = hcHeaderRow + 1; i < matrix.length; i++) {
@@ -10377,8 +10378,8 @@ function PnlMatrixTable({
   };
 
   // dim에 따라 사용할 컬럼 세트 선택
-  const activeCols = dim === "부서" ? deptCols : activeCols;
-  const activeMonthlyCols = dim === "부서" ? deptCols : activeMonthlyCols;
+  const activeCols = dim === "부서" ? deptCols : pnlCols;
+  const activeMonthlyCols = dim === "부서" ? deptCols : monthlyCols;
 
   // 헤더 배경색
   const colHdrStyle = (col, monthAccent) => ({
