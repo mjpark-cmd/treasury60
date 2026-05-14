@@ -8685,17 +8685,26 @@ function PnlView({
     });
   }, [managerial, globalEntity, monthFrom, monthTo]);
 
-  // ── 2단계: 부서/구분/분류항목/과목명/계정과목 필터까지 적용 (상세 보기용) ──
+  // ── 2단계: 구분/분류항목/과목명/계정과목 필터까지 적용 (전체손익/프로젝트별/공통비 공용) ──
+  //          부서 필터는 빠짐 — 부서 필터는 부서별 P&L 서브탭에서만 적용됨
   const detailFiltered = useMemo(() => {
     return baseFiltered.filter(r => {
-      if (global부서 !== "전체" && (r.부서 || "(미지정)") !== global부서) return false;
       if (global구분 !== "전체" && r.구분 !== global구분) return false;
       if (global분류항목 !== "전체" && (r.분류항목 || "(미지정)") !== global분류항목) return false;
       if (global과목명 !== "전체" && (r.과목명 || "(미지정)") !== global과목명) return false;
       if (global계정과목 !== "전체" && (r.계정과목 || "(미지정)") !== global계정과목) return false;
       return true;
     });
-  }, [baseFiltered, global부서, global구분, global분류항목, global과목명, global계정과목]);
+  }, [baseFiltered, global구분, global분류항목, global과목명, global계정과목]);
+
+  // 부서별 P&L 전용 — detailFiltered + 부서 필터까지
+  const departmentFiltered = useMemo(() => {
+    if (global부서 === "전체") return detailFiltered;
+    return detailFiltered.filter(r => (r.부서 || "(미지정)") === global부서);
+  }, [detailFiltered, global부서]);
+
+  // 공통비 배부용 — detailFiltered와 동일 (부서 필터 빠짐)
+  const allocFiltered = detailFiltered;
 
   // 부서 목록 (현재 기간/법인 범위 내 모든 부서)
   const 부서List = useMemo(() => {
@@ -8800,9 +8809,10 @@ function PnlView({
   }, "\uBD80\uC11C ", /*#__PURE__*/React.createElement("span", {
     style: {
       color: COLOR.textDim,
-      marginLeft: 4
+      marginLeft: 4,
+      fontSize: 9
     }
-  }, "(F\uC5F4)")), /*#__PURE__*/React.createElement("select", {
+  }, "(\uBD80\uC11C\uBCC4 P&L \uC804\uC6A9)")), /*#__PURE__*/React.createElement("select", {
     value: global부서,
     onChange: e => setGlobal부서(e.target.value),
     style: selectStyle,
@@ -8964,7 +8974,7 @@ function PnlView({
     global과목명: global과목명,
     global계정과목: global계정과목
   }), subTab === "department" && /*#__PURE__*/React.createElement(PnlByOrgView, {
-    filtered: detailFiltered,
+    filtered: departmentFiltered,
     dim: "\uBD80\uC11C",
     entityLabel: globalEntity,
     periodLabel: `${monthFrom}~${monthTo}`
@@ -8975,7 +8985,7 @@ function PnlView({
     periodLabel: `${monthFrom}~${monthTo}`
   }), subTab === "allocation" && /*#__PURE__*/React.createElement(PnlAllocationView, {
     managerial: managerial,
-    baseFiltered: detailFiltered,
+    baseFiltered: allocFiltered,
     allocConfig: allocConfig,
     headcount: headcount,
     monthFrom: monthFrom,
@@ -9049,15 +9059,23 @@ function PnlAllocationView({
     const commonDepts = new Set(Object.keys(deptMapping)); // 공통부서 이름 집합
 
     // 단위(배부대상) = Master_인원현황 B열에 적힌 조직/법인 (순서 유지)
-    const unitNames = (headcount && headcount.allocationUnits) || [];
+    let unitNames = ((headcount && headcount.allocationUnits) || []).slice();
+    // 폴백 1: 옛 형식(allocationUnits 없음) — mapping의 모든 Y조직 합집합
+    if (unitNames.length === 0 && Object.keys(deptMapping).length > 0) {
+      const set = new Set();
+      Object.values(deptMapping).forEach(arr => arr.forEach(o => set.add(o)));
+      unitNames = Array.from(set);
+    }
+    // 폴백 2: 인원현황이 아예 없음 — baseFiltered에서 비공통 부서 unique
+    if (unitNames.length === 0) {
+      const allDepts = new Set();
+      baseFiltered.forEach(r => {
+        const d = String(r.부서 || "").trim();
+        if (d && !commonDepts.has(d)) allDepts.add(d);
+      });
+      unitNames = Array.from(allDepts).sort();
+    }
     const unitSet = new Set(unitNames);
-
-    // 각 단위가 부서 매칭인지 법인 매칭인지 판단:
-    //   - 부서명이 단위와 일치하는 거래가 있으면 → 부서 매칭 우선
-    //   - 부서명 매칭이 안 되고 법인명이 일치하면 → 법인 매칭 (그 법인 전체)
-    // 단위가 법인명에 해당하는지 미리 체크
-    const ENTITIES_SET = new Set(STANDARD_ENTITIES);
-    const isLegalEntity = u => ENTITIES_SET.has(u);
 
     // 각 단위의 직접 손익 집계
     const direct = {};
@@ -9247,7 +9265,23 @@ function PnlAllocationView({
       borderTop: `1px dashed ${COLOR.warn}40`,
       color: COLOR.textMute
     }
-  }, "\u25B8 \uB370\uC774\uD130 \uAC00\uC838\uC624\uAE30 \uD0ED\uC5D0\uC11C CSV \uC5C5\uB85C\uB4DC \uB610\uB294 Google Sheets\uC5D0\uC11C \uB3D9\uAE30\uD654 \uAC00\uB2A5"))), /*#__PURE__*/React.createElement(Card, {
+  }, "\u25B8 \uB370\uC774\uD130 \uAC00\uC838\uC624\uAE30 \uD0ED\uC5D0\uC11C CSV \uC5C5\uB85C\uB4DC \uB610\uB294 Google Sheets\uC5D0\uC11C \uB3D9\uAE30\uD654 \uAC00\uB2A5"))),
+  allocResult && allocResult.units.length === 0 && /*#__PURE__*/React.createElement(Card, {
+    className: "p-8 text-center",
+    style: {
+      background: `${COLOR.warn}06`,
+      borderColor: `${COLOR.warn}40`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-4xl mb-3"
+  }, "\u26A0\uFE0F"), /*#__PURE__*/React.createElement("div", {
+    className: "text-base font-bold mb-2",
+    style: { color: COLOR.warn }
+  }, "\uB2E8\uC704 \uBAA9\uB85D\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4"), /*#__PURE__*/React.createElement("div", {
+    className: "text-[12px]",
+    style: { color: COLOR.textDim, lineHeight: 1.7, maxWidth: 500, margin: "0 auto" }
+  }, "Master_\uC778\uC6D0\uD604\uD669 \uC2DC\uD2B8\uC758 ", /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "B\uC5F4(\uBC30\uBD80\uC870\uC9C1)"), "\uC5D0 \ub2e8\uc704\uba85(TVPP_xEMS, \uad7f\ub274\uc2a4\uc5d0\ub108\uc9c0 \ub4f1)\uc744 \uc785\ub825\ud55c \ud6c4 ",
+  /*#__PURE__*/React.createElement("b", { style: { color: COLOR.text } }, "\uB370\uC774\uD130 \uAC00\uC838\uC624\uAE30 \uD0ED\uC5D0\uC11C \uB3D9\uAE30\uD654"), "\ub97c \uD574\uC8FC\uC138\uC694.")), /*#__PURE__*/React.createElement(Card, {
     className: "p-5",
     style: {
       background: `linear-gradient(135deg, ${COLOR.gold}08, ${COLOR.purple}06)`,
