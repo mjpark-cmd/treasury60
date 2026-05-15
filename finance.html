@@ -956,6 +956,25 @@ function parseOrdersMatrix(matrix) {
   }
   if (hrow < 0) return [];
   const headers = (matrix[hrow] || []).map(toStr);
+
+  // 컬럼 키 찾기 — prefix 매칭 (예: "최초계획예상매출(2026)" / "최초계획예상매출" 둘 다 인식)
+  const findKey = (...patterns) => {
+    for (const p of patterns) {
+      for (const h of headers) {
+        if (h === p || h.startsWith(p)) return h;
+      }
+    }
+    return null;
+  };
+  const k최초 = findKey("최초계획예상매출");
+  const k변경 = findKey("변경후예상매출");
+  const k이후 = findKey("이후매출") || headers.find(h => /\d{4}년이후매출/.test(h)) || null;
+  // 컬럼명에서 연도 추출 (폴백) — "최초계획예상매출(2026)" → 2026
+  const yearFromHeader = (() => {
+    const m = (k최초 || "").match(/\((\d{4})\)/);
+    return m ? parseInt(m[1], 10) : 2026;
+  })();
+
   const records = [];
   for (let i = hrow + 1; i < matrix.length; i++) {
     const row = matrix[i] || [];
@@ -965,12 +984,16 @@ function parseOrdersMatrix(matrix) {
     });
     const entity = normEntity(raw["법인명"]);
     if (!entity) continue;
+    // 기준년도 — A열의 '기준년도' 우선, 없으면 컬럼명에서 추출, 최종 폴백 2026
+    let year = parseInt(toStr(raw["기준년도"]).replace(/[^0-9]/g, ""), 10);
+    if (!year || isNaN(year)) year = yearFromHeader;
     const 변동구분 = toStr(raw["변동구분"]);
     // 콤마/슬래시로 분리해서 배열화 (예: "상태변경, 금액변경" → ["상태변경","금액변경"])
     const 변동들 = 변동구분 ? 변동구분.split(/[,/]/).map(s => s.trim()).filter(Boolean) : [];
-    const 최초계획 = toNum(raw["최초계획예상매출(2026)"]);
-    const 변경후 = toNum(raw["변경후예상매출(2026)"]);
+    const 최초계획 = toNum(k최초 ? raw[k최초] : "");
+    const 변경후 = toNum(k변경 ? raw[k변경] : "");
     records.push({
+      year,
       entity,
       담당조직: toStr(raw["담당조직"]),
       거래처: toStr(raw["거래처"]),
@@ -989,7 +1012,7 @@ function parseOrdersMatrix(matrix) {
       변경종료일: toStr(raw["변경종료일"]),
       최초계획예상매출: 최초계획,
       변경후예상매출: 변경후,
-      이후매출: toNum(raw["2026년이후매출"]),
+      이후매출: toNum(k이후 ? raw[k이후] : ""),
       gap: 최초계획 - 변경후,
       // 양수 = 매출 감소, 음수 = 매출 증가
       drop: toStr(raw["변경상태(그룹)"]) === "미선정/드랍"
@@ -1714,7 +1737,8 @@ function DataScopeBanner({
   sales,
   managerial,
   orders,
-  tab
+  tab,
+  year
 }) {
   const annual = financial.filter(r => r.periodType === "annual");
   const monthly = financial.filter(r => r.periodType === "monthly");
@@ -1791,15 +1815,26 @@ function DataScopeBanner({
     });
   }
   if (tab === "orders") {
-    if (orders.length > 0) {
-      const 변동 = orders.filter(r => r.변동있음).length;
-      const drop = orders.filter(r => r.drop).length;
+    const ordersOfYear = year ? orders.filter(r => !r.year || r.year === year) : orders;
+    if (ordersOfYear.length > 0) {
+      const 변동 = ordersOfYear.filter(r => r.변동있음).length;
+      const drop = ordersOfYear.filter(r => r.drop).length;
       items.push({
         icon: "🎯",
-        label: "수주관리 (2026)",
-        value: `${orders.length}건`,
+        label: `수주관리 (${year || 2026})`,
+        value: `${ordersOfYear.length}건`,
         sub: `변동 ${변동}건 · 미선정/드랍 ${drop}건`,
         tone: COLOR.info
+      });
+    } else if (orders.length > 0) {
+      // 다른 연도 데이터는 있는데 선택 연도만 없음
+      const yearsAvail = [...new Set(orders.map(r => r.year).filter(Boolean))].sort();
+      items.push({
+        icon: "🎯",
+        label: `수주관리 (${year || 2026})`,
+        value: "데이터 없음",
+        sub: yearsAvail.length > 0 ? `보유 연도: ${yearsAvail.join(", ")}` : "다른 연도 데이터 확인",
+        tone: COLOR.textMute
       });
     } else {
       items.push({
@@ -2400,7 +2435,8 @@ function App() {
     sales: sales,
     managerial: managerial,
     orders: orders,
-    tab: tab
+    tab: tab,
+    year: year
   }), /*#__PURE__*/React.createElement("nav", {
     className: "flex gap-1 mb-6 p-1 rounded-xl",
     style: {
@@ -2564,7 +2600,10 @@ function App() {
     setHeadcount: setHeadcount
   }), !accessDenied && tab === "orders" && /*#__PURE__*/React.createElement(OrdersView, {
     orders: orders,
-    managerial: managerial
+    managerial: managerial,
+    entity: entity,
+    year: year,
+    sales: sales
   }), tab === "import" && adminMode && /*#__PURE__*/React.createElement(ImportView, {
     onFile: onFile,
     financial: financial,
@@ -9745,12 +9784,26 @@ function normProjCode(s) {
   return m ? m[1].trim() : str;
 }
 function OrdersView({
-  orders,
-  managerial
+  orders: ordersAll,
+  managerial,
+  entity,
+  year,
+  sales
 }) {
-  const [globalEntity, setGlobalEntity] = useState("전체");
+  // 상단 글로벌 entity 셀렉터 연동 — 매핑: CONSOLIDATED("전체법인(연결)") → "전체" / 그 외 → 해당 법인명
+  const globalEntity = useMemo(() => {
+    if (!entity || entity === CONSOLIDATED) return "전체";
+    return entity;
+  }, [entity]);
+  // 글로벌 year 필터 적용 — 시트에 기준년도 컬럼 있을 때 그 연도만 표시
+  //   하위 호환: r.year 없는 옛 데이터는 모두 포함
+  const orders = useMemo(() => {
+    if (!year) return ordersAll || [];
+    return (ordersAll || []).filter(r => !r.year || r.year === year);
+  }, [ordersAll, year]);
   const [global담당조직, setGlobal담당조직] = useState("전체");
   const [global변경상태, setGlobal변경상태] = useState("전체");
+  const [global변동구분, setGlobal변동구분] = useState("전체");
   const [planMode, setPlanMode] = useState("최초계획"); // 최초계획 / 변경계획
   const [variationFilter, setVariationFilter] = useState("전체");
   const [search, setSearch] = useState("");
@@ -9763,7 +9816,20 @@ function OrdersView({
     return [...ordered, ...extra];
   }, [orders, hasOrders]);
   const allOrgs = useMemo(() => hasOrders ? [...new Set(orders.map(r => r.담당조직))].filter(Boolean).sort() : [], [orders, hasOrders]);
-  const allStates = useMemo(() => hasOrders ? [...new Set(orders.map(r => r.변경상태))].filter(Boolean).sort() : [], [orders, hasOrders]);
+  // 상태 옵션 — planMode에 따라 어느 컬럼의 상태 목록을 보여줄지
+  //   최초계획 → 기존상태 컬럼 / 변경계획·전체 → 변경상태 컬럼
+  const stateField = planMode === "최초계획" ? "기존상태" : "변경상태";
+  const allStates = useMemo(() => {
+    if (!hasOrders) return [];
+    return [...new Set(orders.map(r => r[stateField]))].filter(Boolean).sort();
+  }, [orders, hasOrders, stateField]);
+  // 변동구분 목록 — 콤마 분리된 값을 풀어서 unique
+  const all변동구분 = useMemo(() => {
+    if (!hasOrders) return [];
+    const s = new Set();
+    orders.forEach(r => (r.변동들 || []).forEach(v => v && s.add(v)));
+    return [...s].sort();
+  }, [orders, hasOrders]);
 
   // ─── 실적 매칭 (법인+프로젝트키) ───
   const realByEntityProject = useMemo(() => {
@@ -9783,6 +9849,20 @@ function OrdersView({
     });
     return result;
   }, [managerial]);
+
+  // 내부거래 차감액 — 매출분석에서 내부거래Y인 매출의 entity별·연도별 합계
+  //   회계 원칙: 그룹 내부거래는 외부 매출 실적에서 제외
+  //   예: 굿뉴스 재생에너지거래(KR) 매출 300, 내부거래Y 10 → 외부 실적 290
+  const internalSalesByEntity = useMemo(() => {
+    if (!sales || sales.length === 0) return {};
+    const result = {};
+    sales.forEach(r => {
+      if (!r.내부거래) return;
+      if (year && r.year && r.year !== year) return; // year 일치
+      result[r.entity] = (result[r.entity] || 0) + (r.amount || 0);
+    });
+    return result;
+  }, [sales, year]);
 
   // 행에 실적 부착 (식스티만 1:1, 그 외는 0)
   const ordersWithReal = useMemo(() => {
@@ -9805,15 +9885,24 @@ function OrdersView({
     });
   }, [orders, realByEntityProject]);
 
-  // 1단계 필터 (법인/조직/변경상태)
+  // 1단계 필터 (법인/조직/상태/변동구분)
+  //   상태 필터는 planMode에 맞춘 컬럼으로 매칭 (최초계획→기존상태, 변경계획→변경상태)
   const baseFiltered = useMemo(() => {
     return ordersWithReal.filter(r => {
       if (globalEntity !== "전체" && r.entity !== globalEntity) return false;
       if (global담당조직 !== "전체" && r.담당조직 !== global담당조직) return false;
-      if (global변경상태 !== "전체" && r.변경상태 !== global변경상태) return false;
+      if (global변경상태 !== "전체" && r[stateField] !== global변경상태) return false;
+      if (global변동구분 !== "전체") {
+        // "(변동없음)" 선택 시 → 변동 0건만
+        if (global변동구분 === "(변동없음)") {
+          if (r.변동있음) return false;
+        } else {
+          if (!(r.변동들 || []).includes(global변동구분)) return false;
+        }
+      }
       return true;
     });
-  }, [ordersWithReal, globalEntity, global담당조직, global변경상태]);
+  }, [ordersWithReal, globalEntity, global담당조직, global변경상태, global변동구분, stateField]);
 
   // 계획 금액 선택 (최초 vs 변경) — '전체' 모드일 때는 변경계획 기준 (보수적)
   const showBoth = planMode === "전체";
@@ -9865,15 +9954,22 @@ function OrdersView({
             matchedProjs += 1;
           }
         });
-        o.real = sum;
+        // 내부거래Y 차감 — 그룹 내부 매출은 외부 실적에서 제외
+        const internal = internalSalesByEntity[o.entity] || 0;
+        o.real = sum - internal;
+        o.realGross = sum;
+        o.internal = internal;
         o.matched = matchedProjs;
+      } else {
+        o.realGross = o.real;
+        o.internal = 0;
       }
       o.plan = effectivePlanMode === "최초계획" ? o.최초 : o.변경;
       o.달성률 = o.plan > 0 ? o.real / o.plan * 100 : null;
       o.잔여 = o.plan - o.real;
     });
     return arr;
-  }, [baseFiltered, realByEntityProject, planMode]);
+  }, [baseFiltered, realByEntityProject, internalSalesByEntity, planMode]);
   const totalReal = useMemo(() => byEntity.reduce((s, e) => s + (e.real || 0), 0), [byEntity]);
   const totalMatchedProj = useMemo(() => byEntity.reduce((s, e) => s + (e.matched || 0), 0), [byEntity]);
 
@@ -9933,6 +10029,7 @@ function OrdersView({
         변동: 0,
         drop: 0,
         변동상세: new Set(),
+        기존상태들: new Set(),
         상태들: new Set()
       });
       const g = groups.get(key);
@@ -9948,6 +10045,7 @@ function OrdersView({
         if (r.변동구분) g.변동상세.add(r.변동구분);
       }
       if (r.drop) g.drop += 1;
+      if (r.기존상태) g.기존상태들.add(r.기존상태);
       if (r.변경상태) g.상태들.add(r.변경상태);
     });
     // 실적 부착
@@ -9965,6 +10063,7 @@ function OrdersView({
         계약금액,
         잔여: plan - real,
         달성률: plan > 0 ? real / plan * 100 : null,
+        기존상태리스트: [...g.기존상태들].join(", "),
         상태리스트: [...g.상태들].join(", ")
       };
     });
@@ -10009,27 +10108,63 @@ function OrdersView({
     return [...m.values()].sort((a, b) => b.count - a.count);
   }, [baseFiltered]);
 
-  // 식스티 담당조직별 (식스티만 — 코드 매칭 가능하므로)
+  // 담당조직별 달성률 — 식스티 + 식스티 외 법인 모두 포함
+  //   식스티 외 법인은 담당조직 없으면 entity로 폴백
+  //   ordersWithReal의 real을 그대로 사용 (그룹 매칭 결과를 entity별로 균등 분배)
   const byOrg = useMemo(() => {
     const m = new Map();
+    // 1) 식스티 — 프로젝트별 1:1 매칭
     baseFiltered.filter(r => r.entity === "식스티헤르츠").forEach(r => {
       const k = r.담당조직 || "(미지정)";
-      if (!m.has(k)) m.set(k, {
-        담당조직: k,
-        plan: 0,
-        real: 0,
-        count: 0
-      });
-      const o = m.get(k);
+      const key = `식스티헤르츠|${k}`;
+      if (!m.has(key)) m.set(key, { entity: "식스티헤르츠", 담당조직: k, plan: 0, real: 0, count: 0 });
+      const o = m.get(key);
       o.plan += planOf(r);
       o.real += r.real || 0;
       o.count += 1;
     });
-    return [...m.values()].map(o => ({
-      ...o,
-      달성률: o.plan > 0 ? o.real / o.plan * 100 : null
-    })).sort((a, b) => b.plan - a.plan);
-  }, [baseFiltered, planMode]);
+    // 2) 식스티 외 법인 — entity별로 묶고, 담당조직 있으면 같이
+    //    실적은 entity 합계를 비율로 분배 (실적이 entity 단위라 정확한 조직별 분리 불가)
+    const otherEntities = new Map();
+    baseFiltered.filter(r => r.entity !== "식스티헤르츠").forEach(r => {
+      if (!otherEntities.has(r.entity)) otherEntities.set(r.entity, { plan: 0, rows: [] });
+      const e = otherEntities.get(r.entity);
+      e.plan += planOf(r);
+      e.rows.push(r);
+    });
+    otherEntities.forEach((eData, ent) => {
+      // entity 그룹의 real (관리손익에서 entity별 합 − 내부거래)
+      const entityMap = realByEntityProject[ent] || {};
+      const projsSet = new Set(eData.rows.map(r => (r.프로젝트명 || "").trim()).filter(Boolean));
+      let entityReal = 0;
+      projsSet.forEach(p => { if (entityMap[p] != null) entityReal += entityMap[p]; });
+      entityReal -= internalSalesByEntity[ent] || 0;
+      // 담당조직별 plan 비율로 real 분배
+      const orgMap = new Map();
+      eData.rows.forEach(r => {
+        const k = r.담당조직 || "(미지정)";
+        if (!orgMap.has(k)) orgMap.set(k, { plan: 0, count: 0 });
+        const o = orgMap.get(k);
+        o.plan += planOf(r);
+        o.count += 1;
+      });
+      orgMap.forEach((data, org) => {
+        const ratio = eData.plan > 0 ? data.plan / eData.plan : 0;
+        const key = `${ent}|${org}`;
+        m.set(key, { entity: ent, 담당조직: org, plan: data.plan, real: entityReal * ratio, count: data.count });
+      });
+    });
+    return [...m.values()]
+      .map(o => ({ ...o, 달성률: o.plan > 0 ? o.real / o.plan * 100 : null }))
+      .sort((a, b) => {
+        // 1순위: 달성률 (높은 순), null/0은 뒤로
+        const ar = a.달성률 == null ? -1 : a.달성률;
+        const br = b.달성률 == null ? -1 : b.달성률;
+        if (br !== ar) return br - ar;
+        // 2순위: plan 큰 순
+        return b.plan - a.plan;
+      });
+  }, [baseFiltered, planMode, realByEntityProject, internalSalesByEntity]);
 
   // ─── 상세 표 (식스티는 행 단위, 그 외는 그룹 단위) ───
   const detailRows = useMemo(() => {
@@ -10044,6 +10179,7 @@ function OrdersView({
         거래처: r.거래처,
         프로젝트명: r.프로젝트명,
         프로젝트코드: r.프로젝트코드,
+        기존상태: r.기존상태,
         변경상태: r.변경상태,
         변동구분: r.변동구분,
         변동있음: r.변동있음,
@@ -10068,6 +10204,7 @@ function OrdersView({
         거래처: g.거래처목록 + (g.거래처수 > 1 ? ` (${g.거래처수}개)` : ""),
         프로젝트명: g.프로젝트명,
         프로젝트코드: "",
+        기존상태: g.기존상태리스트,
         변경상태: g.상태리스트,
         변동구분: [...g.변동상세].join(" / "),
         변동있음: g.변동 > 0,
@@ -10109,26 +10246,18 @@ function OrdersView({
     return COLOR.danger;
   };
   const downloadCsv = () => {
-    const headers = showBoth ? ["타입", "법인명", "담당조직", "거래처", "프로젝트", "프로젝트코드", "변경상태", "변동구분", "건수", "기존계약금액", "변경계약금액", "최초계획", "변경계획", "실적", "잔여", "달성률(%)"] : ["타입", "법인명", "담당조직", "거래처", "프로젝트", "프로젝트코드", "변경상태", "변동구분", "건수", effectivePlanMode === "최초계획" ? "기존계약금액" : "변경계약금액", "계획", "실적", "잔여", "달성률(%)"];
-    const csv = [headers.join(",")];
-    detailRows.forEach(r => {
-      const base = [r.type === "group" ? "그룹" : "단건", r.entity, r.담당조직 || "", '"' + (r.거래처 || "").replace(/"/g, '""') + '"', '"' + (r.프로젝트명 || "").replace(/"/g, '""') + '"', r.프로젝트코드 || "", r.변경상태 || "", '"' + (r.변동구분 || "") + '"', r.count];
-      const tail = [Math.round(r.real), Math.round(r.잔여), r.달성률 != null ? r.달성률.toFixed(1) : ""];
+    const headers = showBoth
+      ? ["타입", "법인명", "담당조직", "거래처", "프로젝트", "프로젝트코드", "기존상태", "변경상태", "변동구분", "건수", "기존계약금액", "변경계약금액", "최초계획", "변경계획", "실적", "잔여", "달성률(%)"]
+      : ["타입", "법인명", "담당조직", "거래처", "프로젝트", "프로젝트코드", "기존상태", "변경상태", "변동구분", "건수", effectivePlanMode === "최초계획" ? "기존계약금액" : "변경계약금액", "계획", "실적", "잔여", "달성률(%)"];
+    const rows = detailRows.map(r => {
+      const base = [r.type === "group" ? "그룹" : "단건", r.entity, r.담당조직 || "", r.거래처 || "", r.프로젝트명 || "", r.프로젝트코드 || "", r.기존상태 || "", r.변경상태 || "", r.변동구분 || "", r.count];
+      const tail = [Math.round(r.real), Math.round(r.잔여), r.달성률 != null ? Number(r.달성률.toFixed(1)) : ""];
       if (showBoth) {
-        csv.push([...base, Math.round(r.기존계약 || 0), Math.round(r.변경계약 || 0), Math.round(r.최초plan || 0), Math.round(r.변경plan || 0), ...tail].join(","));
-      } else {
-        csv.push([...base, Math.round(r.계약금액 || 0), Math.round(r.plan), ...tail].join(","));
+        return [...base, Math.round(r.기존계약 || 0), Math.round(r.변경계약 || 0), Math.round(r.최초plan || 0), Math.round(r.변경plan || 0), ...tail];
       }
+      return [...base, Math.round(r.계약금액 || 0), Math.round(r.plan), ...tail];
     });
-    const blob = new Blob(["\uFEFF" + csv.join("\n")], {
-      type: "text/csv;charset=utf-8;"
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `수주_${planMode}_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadExcel(`수주_${planMode}_${year || 2026}_${new Date().toISOString().slice(0,10)}.xlsx`, headers, rows, "수주관리");
   };
   const hasManagerial = managerial && managerial.length > 0;
 
@@ -10185,7 +10314,7 @@ function OrdersView({
       color: COLOR.gold,
       letterSpacing: "0.18em"
     }
-  }, "\uD83D\uDCCA 2026\uB144 \uB9E4\uCD9C \u2014 \uBAA9\uD45C \uB300\uBE44 \uC218\uC8FC \uB2EC\uC131"), /*#__PURE__*/React.createElement("span", {
+  }, "\uD83D\uDCCA ", year || 2026, "\uB144 \uB9E4\uCD9C \u2014 \uBAA9\uD45C \uB300\uBE44 \uC218\uC8FC \uB2EC\uC131"), /*#__PURE__*/React.createElement("span", {
     className: "text-[10px]",
     style: {
       color: COLOR.textMute
@@ -10508,7 +10637,7 @@ function OrdersView({
     style: {
       color: COLOR.rule
     }
-  }, "\xB7"), /*#__PURE__*/React.createElement("span", null, "2026\uB144 \uC774\uD6C4\uB9E4\uCD9C ", /*#__PURE__*/React.createElement("b", {
+  }, "\xB7"), /*#__PURE__*/React.createElement("span", null, year || 2026, "\uB144 \uC774\uD6C4\uB9E4\uCD9C ", /*#__PURE__*/React.createElement("b", {
     style: {
       color: COLOR.text
     }
@@ -10532,15 +10661,6 @@ function OrdersView({
       letterSpacing: "0.1em"
     }
   }, "\uD83C\uDFAF \uD544\uD130"), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("select", {
-    value: globalEntity,
-    onChange: e => setGlobalEntity(e.target.value),
-    style: selectStyle
-  }, /*#__PURE__*/React.createElement("option", {
-    value: "\uC804\uCCB4"
-  }, "\uC804\uCCB4 \uBC95\uC778 (", allEntities.length, "\uAC1C)"), allEntities.map(e => /*#__PURE__*/React.createElement("option", {
-    key: e,
-    value: e
-  }, e)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("select", {
     value: global담당조직,
     onChange: e => setGlobal담당조직(e.target.value),
     style: selectStyle
@@ -10555,14 +10675,28 @@ function OrdersView({
     style: selectStyle
   }, /*#__PURE__*/React.createElement("option", {
     value: "\uC804\uCCB4"
-  }, "\uC804\uCCB4 \uC0C1\uD0DC"), allStates.map(s => /*#__PURE__*/React.createElement("option", {
+  }, planMode === "\uCD5C\uCD08\uACC4\uD68D" ? "\uC804\uCCB4 \uAE30\uC874\uC0C1\uD0DC" : "\uC804\uCCB4 \uC0C1\uD0DC"), allStates.map(s => /*#__PURE__*/React.createElement("option", {
     key: s,
     value: s
-  }, s)))), (globalEntity !== "전체" || global담당조직 !== "전체" || global변경상태 !== "전체") && /*#__PURE__*/React.createElement("button", {
+  }, s)))),
+  /* 변동구분 필터 — 상태변경/금액변경/일정변경/신규/(변동없음) */
+  /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("select", {
+    value: global변동구분,
+    onChange: e => setGlobal변동구분(e.target.value),
+    style: selectStyle
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "\uC804\uCCB4"
+  }, "\uC804\uCCB4 \uBCC0\uB3D9\uAD6C\uBD84"),
+     /*#__PURE__*/React.createElement("option", { value: "(\uBCC0\uB3D9\uC5C6\uC74C)" }, "(\uBCC0\uB3D9\uC5C6\uC74C)"),
+     all변동구분.map(v => /*#__PURE__*/React.createElement("option", {
+    key: v,
+    value: v
+  }, v)))),
+  (global담당조직 !== "전체" || global변경상태 !== "전체" || global변동구분 !== "전체") && /*#__PURE__*/React.createElement("button", {
     onClick: () => {
-      setGlobalEntity("전체");
       setGlobal담당조직("전체");
       setGlobal변경상태("전체");
+      setGlobal변동구분("전체");
     },
     className: "px-2 py-1 rounded text-[10px]",
     style: {
@@ -10835,12 +10969,12 @@ function OrdersView({
       color: COLOR.textMute,
       letterSpacing: "0.12em"
     }
-  }, "\uC2DD\uC2A4\uD2F0 \uB2F4\uB2F9\uC870\uC9C1\uBCC4"), byOrg.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }, "\uB2F4\uB2F9\uC870\uC9C1\uBCC4 \uB2EC\uC131\uB960 \uC21C\uC704"), byOrg.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "text-[11px] text-center py-4",
     style: {
       color: COLOR.textMute
     }
-  }, "\uC2DD\uC2A4\uD2F0 \uB370\uC774\uD130 \uC5C6\uC74C") : /*#__PURE__*/React.createElement("div", {
+  }, "\uB370\uC774\uD130 \uC5C6\uC74C") : /*#__PURE__*/React.createElement("div", {
     className: "space-y-3"
   }, byOrg.map((o, k) => /*#__PURE__*/React.createElement("div", {
     key: k,
@@ -10850,9 +10984,22 @@ function OrdersView({
   }, /*#__PURE__*/React.createElement("span", {
     style: {
       color: COLOR.text,
-      fontWeight: 500
+      fontWeight: 500,
+      display: "flex",
+      alignItems: "center",
+      gap: 6
     }
-  }, o.담당조직, " ", /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: MONO,
+      color: k < 3 ? COLOR.gold : COLOR.textMute,
+      fontSize: 10,
+      minWidth: 16,
+      fontWeight: 700
+    }
+  }, k + 1), /*#__PURE__*/React.createElement("span", {
+    style: { color: COLOR.textDim, fontSize: 10 }
+  }, o.entity), /*#__PURE__*/React.createElement("span", null, o.담당조직), /*#__PURE__*/React.createElement("span", {
     style: {
       color: COLOR.textMute,
       fontWeight: 400
@@ -11016,7 +11163,7 @@ function OrdersView({
       color: COLOR.gold,
       cursor: "pointer"
     }
-  }, "\u2B07 CSV"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u2B07 Excel"))), /*#__PURE__*/React.createElement("div", {
     className: "rounded-lg overflow-hidden",
     style: {
       border: `1px solid ${COLOR.border}`
@@ -11043,8 +11190,10 @@ function OrdersView({
       borderBottom: `1px solid ${COLOR.borderHi}`
     }
   }, /*#__PURE__*/React.createElement("th", {
-    style: thStyle
+    style: { ...thStyle, minWidth: 84, whiteSpace: "nowrap" }
   }, "\uBC95\uC778"), /*#__PURE__*/React.createElement("th", {
+    style: { ...thStyle, minWidth: 110, whiteSpace: "nowrap" }
+  }, "\uB2F4\uB2F9\uC870\uC9C1"), /*#__PURE__*/React.createElement("th", {
     style: thStyle
   }, "\uD504\uB85C\uC81D\uD2B8"), /*#__PURE__*/React.createElement("th", {
     style: thStyle
@@ -11054,6 +11203,8 @@ function OrdersView({
       textAlign: "center"
     }
   }, "\uAC74\uC218"), /*#__PURE__*/React.createElement("th", {
+    style: thStyle
+  }, "\uAE30\uC874\uC0C1\uD0DC"), /*#__PURE__*/React.createElement("th", {
     style: thStyle
   }, "\uBCC0\uACBD\uC0C1\uD0DC"), showBoth ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("th", {
     style: {
@@ -11112,8 +11263,10 @@ function OrdersView({
       background: r.drop ? `${COLOR.danger}06` : r.변동있음 ? `${COLOR.warn}06` : r.type === "group" ? `${COLOR.info}03` : "transparent"
     }
   }, /*#__PURE__*/React.createElement("td", {
-    style: tdStyle
+    style: { ...tdStyle, minWidth: 84, whiteSpace: "nowrap", wordBreak: "keep-all" }
   }, r.entity), /*#__PURE__*/React.createElement("td", {
+    style: { ...tdStyle, minWidth: 110, whiteSpace: "nowrap", color: COLOR.textDim, fontSize: 11 }
+  }, r.담당조직 || /*#__PURE__*/React.createElement("span", { style: { color: COLOR.textMute } }, "\u2014")), /*#__PURE__*/React.createElement("td", {
     style: {
       ...tdStyle,
       fontWeight: 500,
@@ -11159,6 +11312,18 @@ function OrdersView({
       fontWeight: r.count > 1 ? 600 : 400
     }
   }, r.count), /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...tdStyle,
+      color: stateColor((r.기존상태 || "").split(",")[0].trim()),
+      fontSize: 10,
+      maxWidth: 120,
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      opacity: 0.85
+    },
+    title: r.기존상태
+  }, r.기존상태 || /*#__PURE__*/React.createElement("span", { style: { color: COLOR.textMute } }, "\u2014")), /*#__PURE__*/React.createElement("td", {
     style: {
       ...tdStyle,
       color: stateColor((r.변경상태 || "").split(",")[0].trim()),
