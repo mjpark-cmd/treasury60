@@ -61,6 +61,10 @@
   .min-w-\[20px\]{min-width:20px}
   .border-t{border-top-width:1px;border-top-style:solid}.border-b{border-bottom-width:1px;border-bottom-style:solid}
   .inline-flex{display:inline-flex}
+  /* 표 가독성 — zebra striping + 행 hover */
+  .row-hover:hover{background:rgba(208,169,79,.08)!important;transition:background .12s}
+  tbody.tbody-zebra > tr:nth-child(even):not(.row-selected){background:rgba(120,120,120,.025)}
+  tbody.tbody-zebra > tr.row-zero{opacity:.55}
 </style>
 </head>
 <body>
@@ -487,6 +491,11 @@ const SERIF = '"Cormorant Garamond", "Noto Serif KR", Georgia, serif';
 const MONO = '"JetBrains Mono", "SF Mono", Consolas, monospace';
 const STANDARD_ENTITIES = ["식스티헤르츠", "굿뉴스에너지", "Goodnews Energy US", "패리티빌더즈", "패리티1"];
 const CONSOLIDATED = "전체법인(연결)";
+// 법인 별칭 — 미국법인 등 자회사를 한국 본법인의 단위로 합산
+//   글로벌 entity 셀렉터 + PnlView 필터 + PnlAllocationView 매칭에 공통 적용
+const ENTITY_ALIASES = {
+  "Goodnews Energy US": "굿뉴스에너지"
+};
 const SCOPE_INDIVIDUAL_ALL = "__개별5사합산__";
 const ENTITY_ALIAS = {
   "Goodnews Energy US Inc": "Goodnews Energy US",
@@ -1704,8 +1713,10 @@ function KPI({
   delta
 }) {
   const deltaTone = delta == null ? null : delta >= 0 ? COLOR.success : COLOR.danger;
+  const hasAccent = tone !== COLOR.text;
   return /*#__PURE__*/React.createElement(Card, {
-    className: "p-3.5"
+    className: "p-3.5",
+    style: hasAccent ? { borderLeft: `3px solid ${tone}` } : {}
   }, /*#__PURE__*/React.createElement("div", {
     className: "text-[10px] uppercase tracking-wider",
     style: {
@@ -1803,22 +1814,36 @@ function DataScopeBanner({
       tone: COLOR.textMute
     });
   }
-  if (tab === "sales" && salesLast) {
-    items.push({
+  if (tab === "sales") {
+    if (monthlyLast) items.push({
+      icon: "💰",
+      label: "매출 마스터",
+      value: `${monthlyConsolMonths[0] || salesMonths[0] || monthlyMonths[0]} ~ ${monthlyLast}`,
+      sub: `${monthlyClosedCount}개월 · 전체법인(연결) 입력월 기준`,
+      tone: COLOR.gold
+    });
+    else if (salesLast) items.push({
       icon: "💰",
       label: "매출 마스터",
       value: `${salesMonths[0]} ~ ${salesLast}`,
-      sub: `${salesMonths.length}개월`,
-      tone: COLOR.gold
+      sub: `${salesMonths.length}개월 · 연결 마감 데이터 없음`,
+      tone: COLOR.warn
     });
   }
-  if (tab === "pnl" && managerialLast) {
-    items.push({
+  if (tab === "pnl") {
+    if (monthlyLast) items.push({
+      icon: "💼",
+      label: "관리손익",
+      value: `${monthlyConsolMonths[0] || managerialMonths[0] || monthlyMonths[0]} ~ ${monthlyLast}`,
+      sub: `${monthlyClosedCount}개월 · 전체법인(연결) 입력월 기준`,
+      tone: COLOR.purple
+    });
+    else if (managerialLast) items.push({
       icon: "💼",
       label: "관리손익",
       value: `${managerialMonths[0]} ~ ${managerialLast}`,
-      sub: `${managerialMonths.length}개월 · 마감된 월만 입력됨`,
-      tone: COLOR.purple
+      sub: `${managerialMonths.length}개월 · 연결 마감 데이터 없음`,
+      tone: COLOR.warn
     });
   }
   if (tab === "orders") {
@@ -2116,6 +2141,16 @@ function App() {
   // 연간/월간 분리 뷰
   const financialAnnual = useMemo(() => financial.filter(r => r.periodType === "annual"), [financial]);
   const financialMonthly = useMemo(() => financial.filter(r => r.periodType === "monthly"), [financial]);
+  // 연결 마감월 — Master_재무제표(월간)의 entity="전체법인(연결)" 입력월 중 최대값
+  //   모든 페이지(매출/손익/재무제표)에서 이 월 이후 데이터는 "미확정"으로 간주
+  const closedMonth = useMemo(() => {
+    const isConsol = r => {
+      const e = String(r.entity || "").replace(/\s+/g, "");
+      return e === "전체법인(연결)" || e.startsWith("전체법인") || e === "연결";
+    };
+    const closedMonths = [...new Set(financialMonthly.filter(isConsol).map(r => r.monthKey))].filter(Boolean).sort();
+    return closedMonths[closedMonths.length - 1] || "";
+  }, [financialMonthly]);
   const hasData = financial.length > 0 || sales.length > 0 || managerial.length > 0 || orders.length > 0;
   const allYears = useMemo(() => {
     const ys = new Set();
@@ -2595,7 +2630,8 @@ function App() {
   }), !accessDenied && tab === "sales" && /*#__PURE__*/React.createElement(SalesView, {
     sales: sales,
     year: year,
-    entity: entity
+    entity: entity,
+    closedMonth: closedMonth
   }), !accessDenied && tab === "pnl" && /*#__PURE__*/React.createElement(PnlView, {
     managerial: managerial,
     year: year,
@@ -2603,6 +2639,7 @@ function App() {
     allocConfig: allocConfig,
     headcount: headcount,
     sales: sales,
+    closedMonth: closedMonth,
     setAllocConfig: setAllocConfig,
     setHeadcount: setHeadcount
   }), !accessDenied && tab === "orders" && /*#__PURE__*/React.createElement(OrdersView, {
@@ -7417,7 +7454,8 @@ const EMPTY_FILTERS = {
 function SalesView({
   sales,
   year,
-  entity
+  entity,
+  closedMonth
 }) {
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [counterpartQuery, setCounterpartQuery] = useState("");
@@ -7471,8 +7509,12 @@ function SalesView({
   const allBiz = [...new Set(baseRows.map(r => r.Biz모델 || "(미지정)"))].sort();
   const allCounterpartsRaw = [...new Set(baseRows.map(r => r.거래처).filter(Boolean))].sort();
 
-  // 데이터에 등장한 모든 monthKey (period 입력의 min/max 가이드용)
-  const allMonths = [...new Set(baseRows.map(r => r.monthKey).filter(Boolean))].sort();
+  // 데이터에 등장한 모든 monthKey — 연결 마감월 이후 제외
+  const allMonths = (() => {
+    const all = [...new Set(baseRows.map(r => r.monthKey).filter(Boolean))].sort();
+    if (closedMonth) return all.filter(m => m <= closedMonth);
+    return all;
+  })();
   const minMonth = allMonths[0] || "";
   const maxMonth = allMonths[allMonths.length - 1] || "";
 
@@ -8728,6 +8770,7 @@ function PnlView({
   allocConfig,
   headcount,
   sales,
+  closedMonth,
   setAllocConfig,
   setHeadcount
 }) {
@@ -8747,7 +8790,13 @@ function PnlView({
     const extra = [...present].filter(e => !STANDARD_ENTITIES.includes(e));
     return [...ordered, ...extra];
   }, [managerial]);
-  const allMonths = useMemo(() => [...new Set((managerial || []).map(r => r.monthKey))].filter(Boolean).sort(), [managerial]);
+  // 연결 마감월(closedMonth)을 ground truth로 사용 — 그 이후 월은 미확정이라 제외
+  //   closedMonth 없으면 폴백으로 managerial의 max 월 사용
+  const allMonths = useMemo(() => {
+    const all = [...new Set((managerial || []).map(r => r.monthKey))].filter(Boolean).sort();
+    if (closedMonth) return all.filter(m => m <= closedMonth);
+    return all;
+  }, [managerial, closedMonth]);
   const minMonth = allMonths[0] || "";
   const maxMonth = allMonths[allMonths.length - 1] || "";
   // 글로벌 필터 (즉시 반영)
@@ -8818,10 +8867,10 @@ function PnlView({
     .trim();
   const baseFiltered = useMemo(() => {
     return managerial.filter(r => {
-      // entity 필터:
-      //   "전체" (= 상단에서 전체법인(연결) 선택) → 연결 entity 행은 제외 (가공치, 거래단위 손익에 부적합)
-      //     5개 개별 법인의 거래 행만 합산 → 부서별 P&L에 정상 반영
-      //   특정 법인 → 그 법인 행만
+      // entity 필터: 정확 매칭 (전체 P&L / 부서별 P&L / 공통비 배부 모두 공유)
+      //   "전체" → 연결 entity 제외, 5사 합산
+      //   특정 법인 → 그 법인만
+      //   프로젝트별 P&L만 별도로 양방향 별칭 매칭 (detailFilteredForProject 참조)
       if (globalEntity === "전체") {
         if (r.entity === CONSOLIDATED) return false;
       } else if (r.entity !== globalEntity) {
@@ -8861,6 +8910,40 @@ function PnlView({
 
   // 공통비 배부용 — detailFiltered와 동일 (부서 필터 빠짐)
   const allocFiltered = detailFiltered;
+
+  // 프로젝트별 P&L 전용 — 선택 entity의 프로젝트 set에 속한 별칭 자회사 row만 합산
+  //   예: 굿뉴스에너지 선택 → 굿뉴스 모든 row + US의 row 중 굿뉴스 프로젝트와 매칭되는 것만
+  //   예: Goodnews Energy US 선택 → US 모든 row + 굿뉴스 row 중 US 프로젝트와 매칭되는 것만
+  //   다른 서브탭(전체/부서별/배부)은 영향 없음
+  const projectFiltered = useMemo(() => {
+    const passBasic = r => {
+      if (monthFrom && r.monthKey < monthFrom) return false;
+      if (monthTo && r.monthKey > monthTo) return false;
+      if (global구분 !== "전체" && r.구분 !== global구분) return false;
+      if (global분류항목 !== "전체" && matchNorm(r.분류항목 || "(미지정)") !== matchNorm(global분류항목)) return false;
+      if (global과목명 !== "전체" && matchNorm(r.과목명 || "(미지정)") !== matchNorm(global과목명)) return false;
+      if (global계정과목 !== "전체" && matchNorm(r.계정과목 || "(미지정)") !== matchNorm(global계정과목)) return false;
+      return true;
+    };
+    if (globalEntity === "전체") {
+      return managerial.filter(r => r.entity !== CONSOLIDATED && passBasic(r));
+    }
+    // 선택 entity의 프로젝트 set (자회사와 합칠 기준)
+    const selectedProjects = new Set(
+      managerial
+        .filter(r => r.entity === globalEntity && passBasic(r))
+        .map(r => r.프로젝트 || "")
+        .filter(Boolean)
+    );
+    const groupOfSelected = ENTITY_ALIASES[globalEntity] || globalEntity;
+    return managerial.filter(r => {
+      if (!passBasic(r)) return false;
+      const groupOfR = ENTITY_ALIASES[r.entity] || r.entity;
+      if (groupOfR !== groupOfSelected) return false;
+      if (r.entity === globalEntity) return true; // 선택 entity 모든 row
+      return selectedProjects.has(r.프로젝트 || ""); // 자회사는 매칭 프로젝트만
+    });
+  }, [managerial, globalEntity, monthFrom, monthTo, global구분, global분류항목, global과목명, global계정과목]);
 
   // 부서 목록 (현재 기간/법인 범위 내 모든 부서)
   const 부서List = useMemo(() => {
@@ -9074,7 +9157,9 @@ function PnlView({
       color: COLOR.textDim,
       marginLeft: 4
     }
-  }, "(C\uC5F4)")), /*#__PURE__*/React.createElement("select", {
+  }, "(C\uC5F4)"), global구분 !== "전체" && /*#__PURE__*/React.createElement("span", {
+    style: { color: COLOR.gold, marginLeft: 6, fontWeight: 600 }
+  }, "\u25CF \uD65C\uC131")), /*#__PURE__*/React.createElement("select", {
     value: global구분,
     onChange: e => {
       setGlobal구분(e.target.value);
@@ -9082,7 +9167,7 @@ function PnlView({
       setGlobal과목명("전체");
       setGlobal계정과목("전체");
     },
-    style: selectStyle,
+    style: { ...selectStyle, borderColor: global구분 !== "전체" ? COLOR.gold : COLOR.border, background: global구분 !== "전체" ? `${COLOR.gold}08` : COLOR.surface },
     className: "w-full"
   }, /*#__PURE__*/React.createElement("option", {
     value: "\uC804\uCCB4"
@@ -9106,14 +9191,16 @@ function PnlView({
       color: COLOR.textDim,
       marginLeft: 4
     }
-  }, "(D\uC5F4)")), /*#__PURE__*/React.createElement("select", {
+  }, "(D\uC5F4)"), global분류항목 !== "전체" && /*#__PURE__*/React.createElement("span", {
+    style: { color: COLOR.gold, marginLeft: 6, fontWeight: 600 }
+  }, "\u25CF \uD65C\uC131")), /*#__PURE__*/React.createElement("select", {
     value: global분류항목,
     onChange: e => {
       setGlobal분류항목(e.target.value);
       setGlobal과목명("전체");
       setGlobal계정과목("전체");
     },
-    style: selectStyle,
+    style: { ...selectStyle, borderColor: global분류항목 !== "전체" ? COLOR.gold : COLOR.border, background: global분류항목 !== "전체" ? `${COLOR.gold}08` : COLOR.surface },
     className: "w-full"
   }, /*#__PURE__*/React.createElement("option", {
     value: "\uC804\uCCB4"
@@ -9130,13 +9217,15 @@ function PnlView({
       color: COLOR.textDim,
       marginLeft: 4
     }
-  }, "(G\uC5F4)")), /*#__PURE__*/React.createElement("select", {
+  }, "(G\uC5F4)"), global과목명 !== "전체" && /*#__PURE__*/React.createElement("span", {
+    style: { color: COLOR.gold, marginLeft: 6, fontWeight: 600 }
+  }, "\u25CF \uD65C\uC131")), /*#__PURE__*/React.createElement("select", {
     value: global과목명,
     onChange: e => {
       setGlobal과목명(e.target.value);
       setGlobal계정과목("전체");
     },
-    style: selectStyle,
+    style: { ...selectStyle, borderColor: global과목명 !== "전체" ? COLOR.gold : COLOR.border, background: global과목명 !== "전체" ? `${COLOR.gold}08` : COLOR.surface },
     className: "w-full"
   }, /*#__PURE__*/React.createElement("option", {
     value: "\uC804\uCCB4"
@@ -9153,10 +9242,12 @@ function PnlView({
       color: COLOR.textDim,
       marginLeft: 4
     }
-  }, "(H\uC5F4)")), /*#__PURE__*/React.createElement("select", {
+  }, "(H\uC5F4)"), global계정과목 !== "전체" && /*#__PURE__*/React.createElement("span", {
+    style: { color: COLOR.gold, marginLeft: 6, fontWeight: 600 }
+  }, "\u25CF \uD65C\uC131")), /*#__PURE__*/React.createElement("select", {
     value: global계정과목,
     onChange: e => setGlobal계정과목(e.target.value),
-    style: selectStyle,
+    style: { ...selectStyle, borderColor: global계정과목 !== "전체" ? COLOR.gold : COLOR.border, background: global계정과목 !== "전체" ? `${COLOR.gold}08` : COLOR.surface },
     className: "w-full"
   }, /*#__PURE__*/React.createElement("option", {
     value: "\uC804\uCCB4"
@@ -9205,7 +9296,7 @@ function PnlView({
     entityLabel: globalEntity,
     periodLabel: `${monthFrom}~${monthTo}`
   }), subTab === "project" && /*#__PURE__*/React.createElement(PnlByOrgView, {
-    filtered: detailFiltered,
+    filtered: projectFiltered,
     dim: "\uD504\uB85C\uC81D\uD2B8",
     entityLabel: globalEntity,
     periodLabel: `${monthFrom}~${monthTo}`
@@ -9376,12 +9467,7 @@ function PnlAllocationView({
     const unmappedDetails = {};
     let unmappedSum = 0;
     const allocDetail = []; // 단위×공통조직 명세 (월, 계정과목, 원금액, 인원, 비율, 배부금액)
-    // 법인 별칭 — 미국법인 등 자회사를 한국 본법인의 단위로 합산
-    //   예: Goodnews Energy US → 굿뉴스에너지 단위에 합산
-    const ENTITY_ALIASES = {
-      "Goodnews Energy US": "굿뉴스에너지"
-    };
-    // entity → 단위(direct의 키)로 해석
+    // entity → 단위(direct의 키)로 해석 (전역 ENTITY_ALIASES 사용)
     const resolveUnit = e => {
       if (!e) return null;
       if (direct[e]) return e;
@@ -11591,6 +11677,7 @@ function PnlOverview({
   }, /*#__PURE__*/React.createElement(KPI, {
     label: "\uB9E4\uCD9C",
     value: fmtKRW(summary.매출),
+    tone: COLOR.gold,
     sub: `${baseFiltered.filter(r => r.구분 === "매출").length}건`
   }), /*#__PURE__*/React.createElement(KPI, {
     label: "\uB9E4\uCD9C\uCD1D\uC774\uC775",
@@ -12621,13 +12708,20 @@ function PnlMatrixTable({
       textAlign: "right",
       minWidth: 56
     }
-  }, "\uAC74\uC218"))), /*#__PURE__*/React.createElement("tbody", null, rows.map((r, k) => {
+  }, "\uAC74\uC218"))), /*#__PURE__*/React.createElement("tbody", { className: "tbody-zebra" }, rows.map((r, k) => {
     const isSelected = r.name === selected;
     const isUnassigned = r.name === "(미지정)";
     const clickable = !!onSelect;
+    const isZeroRow = (!r.매출 || r.매출 === 0) && (!r.조직매출 || r.조직매출 === 0);
     const rowBg = isSelected ? `${COLOR.gold}15` : "transparent";
+    const rowClasses = [
+      clickable ? "row-hover" : "",
+      isSelected ? "row-selected" : "",
+      isZeroRow ? "row-zero" : ""
+    ].filter(Boolean).join(" ");
     return /*#__PURE__*/React.createElement("tr", {
       key: k,
+      className: rowClasses,
       onClick: clickable ? () => onSelect(r.name === selected ? null : r.name) : undefined,
       style: {
         borderBottom: `1px dashed ${COLOR.border}`,
@@ -13193,8 +13287,9 @@ function PnlDetailTable({
       marginLeft: 3,
       color: COLOR.gold
     }
-  }, sortDir === "asc" ? "▲" : "▼")))), /*#__PURE__*/React.createElement("tbody", null, pageRows.map((r, k) => /*#__PURE__*/React.createElement("tr", {
+  }, sortDir === "asc" ? "▲" : "▼")))), /*#__PURE__*/React.createElement("tbody", { className: "tbody-zebra" }, pageRows.map((r, k) => /*#__PURE__*/React.createElement("tr", {
     key: k,
+    className: "row-hover",
     style: {
       borderBottom: `1px dashed ${COLOR.border}`
     }
