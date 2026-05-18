@@ -899,6 +899,13 @@ function parseManagerialMatrix(matrix) {
     return 구분;
   };
   const records = [];
+  // 보이지 않는 차이(zero-width, BOM, NBSP, 유니코드 조합 형태) 정규화 —
+  // 사용자 시트에서 같은 "인건비"인데 미묘하게 표기가 달라 매칭 실패하는 케이스 방지
+  const normText = s => toStr(s)
+    .normalize("NFC")                               // 한글 자모 조합 통일
+    .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "")    // zero-width + NBSP 제거
+    .replace(/\s+/g, " ")                           // 연속 공백 → 단일 공백
+    .trim();
   for (let i = hrow + 1; i < matrix.length; i++) {
     const row = matrix[i] || [];
     const raw = {};
@@ -910,7 +917,7 @@ function parseManagerialMatrix(matrix) {
     const date = toStr(raw["일자"]);
     const monthKey = toMonthKey(date);
     const year = toYear(date);
-    const 분류항목 = toStr(raw["분류항목"]);
+    const 분류항목 = normText(raw["분류항목"]);
     const baseGubun = norm구분(raw["구분"]);
     const finalGubun = inferFromCategory(baseGubun, 분류항목);
     records.push({
@@ -922,11 +929,11 @@ function parseManagerialMatrix(matrix) {
       구분: finalGubun,
       분류항목,
       계정코드: toStr(raw["계정코드"]),
-      과목명: toStr(raw["과목명"]),
-      계정과목: toStr(raw["계정과목"]),
+      과목명: normText(raw["과목명"]),
+      계정과목: normText(raw["계정과목"]),
       적요: toStr(raw["적요"]),
       거래처: toStr(raw["거래처명"]),
-      부서: toStr(raw["부서명"]),
+      부서: normText(raw["부서명"]),
       프로젝트: toStr(raw["프로젝트"])
     });
   }
@@ -8803,6 +8810,12 @@ function PnlView({
   }
 
   // ── 1단계: 법인 + 기간 필터 (P&L 합계 산출용 — 구분/분류항목/과목명 무관) ──
+  // 텍스트 매칭용 정규화 — parseManagerial에서 정규화 안 된 옛 데이터에도 안전망
+  const matchNorm = s => String(s == null ? "" : s)
+    .normalize("NFC")
+    .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
   const baseFiltered = useMemo(() => {
     return managerial.filter(r => {
       // entity 필터:
@@ -8822,12 +8835,13 @@ function PnlView({
 
   // ── 2단계: 구분/분류항목/과목명/계정과목 필터까지 적용 (전체손익/프로젝트별/공통비 공용) ──
   //          부서 필터는 빠짐 — 부서 필터는 부서별 P&L 서브탭에서만 적용됨
+  //          매칭은 정규화 후 비교 (zero-width/NBSP/조합 자모 차이 흡수)
   const detailFiltered = useMemo(() => {
     return baseFiltered.filter(r => {
       if (global구분 !== "전체" && r.구분 !== global구분) return false;
-      if (global분류항목 !== "전체" && (r.분류항목 || "(미지정)") !== global분류항목) return false;
-      if (global과목명 !== "전체" && (r.과목명 || "(미지정)") !== global과목명) return false;
-      if (global계정과목 !== "전체" && (r.계정과목 || "(미지정)") !== global계정과목) return false;
+      if (global분류항목 !== "전체" && matchNorm(r.분류항목 || "(미지정)") !== matchNorm(global분류항목)) return false;
+      if (global과목명 !== "전체" && matchNorm(r.과목명 || "(미지정)") !== matchNorm(global과목명)) return false;
+      if (global계정과목 !== "전체" && matchNorm(r.계정과목 || "(미지정)") !== matchNorm(global계정과목)) return false;
       return true;
     });
   }, [baseFiltered, global구분, global분류항목, global과목명, global계정과목]);
@@ -8866,34 +8880,71 @@ function PnlView({
   }, [headcount]);
   const 공통조직List = useMemo(() => Object.keys((headcount && headcount.mapping) || {}), [headcount]);
 
-  // 분류항목 목록 (구분 적용 후)
+  // 분류항목 목록 (구분 적용 후) — 정규화 키로 unique, 표시는 첫 등장 표기 + entity 분포
   const 분류항목List = useMemo(() => {
     const filtered = global구분 === "전체" ? baseFiltered : baseFiltered.filter(r => r.구분 === global구분);
-    return [...new Set(filtered.map(r => r.분류항목 || "(미지정)"))].sort();
+    const seen = new Map(); // normKey → { label, entities: Set }
+    filtered.forEach(r => {
+      const v = r.분류항목 || "(미지정)";
+      const k = matchNorm(v);
+      if (!seen.has(k)) seen.set(k, { label: v, entities: new Set() });
+      seen.get(k).entities.add(r.entity);
+    });
+    return [...seen.values()]
+      .map(o => ({ value: o.label, entitiesCount: o.entities.size, entities: [...o.entities] }))
+      .sort((a, b) => a.value.localeCompare(b.value));
   }, [baseFiltered, global구분]);
 
-  // 과목명 목록 (pending 구분 + 분류항목 적용 후)
+  // 과목명 목록
   const 과목명List = useMemo(() => {
     let f = baseFiltered;
     if (global구분 !== "전체") f = f.filter(r => r.구분 === global구분);
-    if (global분류항목 !== "전체") f = f.filter(r => (r.분류항목 || "(미지정)") === global분류항목);
-    return [...new Set(f.map(r => r.과목명 || "(미지정)"))].filter(x => x !== "(미지정)" || f.some(r => !r.과목명)).sort();
+    if (global분류항목 !== "전체") f = f.filter(r => matchNorm(r.분류항목 || "(미지정)") === matchNorm(global분류항목));
+    const seen = new Map();
+    f.forEach(r => {
+      const v = r.과목명 || "(미지정)";
+      const k = matchNorm(v);
+      if (!seen.has(k)) seen.set(k, v);
+    });
+    return [...seen.values()].filter(x => x !== "(미지정)" || f.some(r => !r.과목명)).sort();
   }, [baseFiltered, global구분, global분류항목]);
 
-  // 계정과목 목록 (pending 구분 + 분류항목 + 과목명 적용 후)
+  // 계정과목 목록
   const 계정과목List = useMemo(() => {
     let f = baseFiltered;
     if (global구분 !== "전체") f = f.filter(r => r.구분 === global구분);
-    if (global분류항목 !== "전체") f = f.filter(r => (r.분류항목 || "(미지정)") === global분류항목);
-    if (global과목명 !== "전체") f = f.filter(r => (r.과목명 || "(미지정)") === global과목명);
-    return [...new Set(f.map(r => r.계정과목 || "(미지정)"))].filter(x => x !== "(미지정)" || f.some(r => !r.계정과목)).sort();
+    if (global분류항목 !== "전체") f = f.filter(r => matchNorm(r.분류항목 || "(미지정)") === matchNorm(global분류항목));
+    if (global과목명 !== "전체") f = f.filter(r => matchNorm(r.과목명 || "(미지정)") === matchNorm(global과목명));
+    const seen = new Map();
+    f.forEach(r => {
+      const v = r.계정과목 || "(미지정)";
+      const k = matchNorm(v);
+      if (!seen.has(k)) seen.set(k, v);
+    });
+    return [...seen.values()].filter(x => x !== "(미지정)" || f.some(r => !r.계정과목)).sort();
   }, [baseFiltered, global구분, global분류항목, global과목명]);
   const hasDept = useMemo(() => managerial.some(r => r.부서), [managerial]);
   const hasProj = useMemo(() => managerial.some(r => r.프로젝트), [managerial]);
   const detailOnlyActive = global부서 !== "전체" || global구분 !== "전체" || global분류항목 !== "전체" || global과목명 !== "전체" || global계정과목 !== "전체";
   return /*#__PURE__*/React.createElement("div", {
     className: "space-y-4"
-  }, /*#__PURE__*/React.createElement(Card, {
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-2 flex-wrap pb-1"
+  }, /*#__PURE__*/React.createElement(SubTab, {
+    active: subTab === "overview",
+    onClick: () => setSubTab("overview")
+  }, "\uD83E\uDDEE \uC804\uCCB4 P&L"), /*#__PURE__*/React.createElement(SubTab, {
+    active: subTab === "department",
+    onClick: () => setSubTab("department"),
+    disabled: !hasDept
+  }, "\uD83C\uDFE2 \uBD80\uC11C\uBCC4 P&L"), /*#__PURE__*/React.createElement(SubTab, {
+    active: subTab === "project",
+    onClick: () => setSubTab("project"),
+    disabled: !hasProj
+  }, "\uD83D\uDCC1 \uD504\uB85C\uC81D\uD2B8\uBCC4 P&L"), /*#__PURE__*/React.createElement(SubTab, {
+    active: subTab === "allocation",
+    onClick: () => setSubTab("allocation")
+  }, "\uD83E\uDE99 \uACF5\uD1B5\uBE44 \uBC30\uBD80\uC190\uC775")), /*#__PURE__*/React.createElement(Card, {
     className: "p-4",
     style: {
       background: `${COLOR.gold}06`,
@@ -9067,9 +9118,9 @@ function PnlView({
   }, /*#__PURE__*/React.createElement("option", {
     value: "\uC804\uCCB4"
   }, "\uC804\uCCB4 (", 분류항목List.length, "\uAC1C)"), 분류항목List.map(c => /*#__PURE__*/React.createElement("option", {
-    key: c,
-    value: c
-  }, c)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    key: c.value,
+    value: c.value
+  }, c.value, " (", c.entitiesCount, "\uAC1C \uBC95\uC778)")))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     className: "text-[10px] block mb-1",
     style: {
       color: COLOR.textMute
@@ -9138,23 +9189,7 @@ function PnlView({
       fontWeight: 600,
       marginLeft: "auto"
     }
-  }, "\uC0C1\uC138 \uD544\uD130 \uC801\uC6A9 \uD6C4: ", detailFiltered.length.toLocaleString(), "\uAC74"))), /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center gap-2 flex-wrap"
-  }, /*#__PURE__*/React.createElement(SubTab, {
-    active: subTab === "overview",
-    onClick: () => setSubTab("overview")
-  }, "\uD83D\uDCCA \uC804\uCCB4 \uC190\uC775\uBD84\uC11D"), /*#__PURE__*/React.createElement(SubTab, {
-    active: subTab === "department",
-    onClick: () => setSubTab("department"),
-    disabled: !hasDept
-  }, "\uD83C\uDFE2 \uBD80\uC11C\uBCC4 P&L"), /*#__PURE__*/React.createElement(SubTab, {
-    active: subTab === "project",
-    onClick: () => setSubTab("project"),
-    disabled: !hasProj
-  }, "\uD83D\uDCC1 \uD504\uB85C\uC81D\uD2B8\uBCC4 P&L"), /*#__PURE__*/React.createElement(SubTab, {
-    active: subTab === "allocation",
-    onClick: () => setSubTab("allocation")
-  }, "\uD83E\uDE99 \uACF5\uD1B5\uBE44 \uBC30\uBD80\uC190\uC775")), subTab === "overview" && /*#__PURE__*/React.createElement(PnlOverview, {
+  }, "\uC0C1\uC138 \uD544\uD130 \uC801\uC6A9 \uD6C4: ", detailFiltered.length.toLocaleString(), "\uAC74"))), subTab === "overview" && /*#__PURE__*/React.createElement(PnlOverview, {
     baseFiltered: detailFiltered,
     detailFiltered: detailFiltered,
     entityLabel: globalEntity,
@@ -9235,15 +9270,18 @@ function SubTab({
     onClick: disabled ? undefined : onClick,
     disabled: disabled,
     style: {
-      padding: "6px 14px",
+      padding: "8px 16px",
       fontSize: 12,
-      fontWeight: 500,
+      fontWeight: active ? 600 : 500,
       border: `1px solid ${active ? COLOR.gold : COLOR.border}`,
       background: active ? COLOR.gold : COLOR.surface,
-      color: active ? "#fff" : disabled ? COLOR.textMute : COLOR.textDim,
+      color: active ? "#fff" : disabled ? COLOR.textMute : COLOR.text,
       borderRadius: 8,
       cursor: disabled ? "not-allowed" : "pointer",
-      opacity: disabled ? 0.5 : 1
+      opacity: disabled ? 0.5 : 1,
+      boxShadow: active ? `0 2px 6px ${COLOR.gold}40` : "none",
+      transition: "all 0.15s",
+      letterSpacing: "0.02em"
     }
   }, children);
 }
@@ -12117,10 +12155,54 @@ function PnlByOrgView({
     rows: orgPnls,
     totalRow: totalRow,
     dim: dim,
-    onSelect: () => {},
-    selected: null,
+    onSelect: dim === "프로젝트" ? setSelectedOrg : null,
+    selected: dim === "프로젝트" ? selectedOrg : null,
     showMonthly: showMonthly,
     months: monthsInRange
+  })),
+  // 선택된 프로젝트의 상세 거래내역 (프로젝트 dim일 때만 + 선택된 행 있을 때)
+  dim === "프로젝트" && selectedOrg && /*#__PURE__*/React.createElement(Card, {
+    className: "p-5 mt-4",
+    style: {
+      background: `${COLOR.gold}06`,
+      borderColor: `${COLOR.gold}40`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center justify-between mb-3 flex-wrap gap-2"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "text-xs uppercase tracking-wider",
+    style: { color: COLOR.gold, letterSpacing: "0.12em", fontWeight: 700 }
+  }, "\u25B8 \uD504\uB85C\uC81D\uD2B8 \uC0C1\uC138 \uAC70\uB798\uB0B4\uC5ED"), /*#__PURE__*/React.createElement("div", {
+    className: "text-[13px] mt-1",
+    style: { color: COLOR.text, fontWeight: 600 }
+  }, selectedOrg), /*#__PURE__*/React.createElement("div", {
+    className: "text-[10px] mt-0.5",
+    style: { color: COLOR.textDim }
+  }, selectedRows.length.toLocaleString(), "\uAC74 \xB7 \uD569\uACC4 ", /*#__PURE__*/React.createElement("b", {
+    style: { color: COLOR.text, fontFamily: MONO }
+  }, Math.round(selectedRows.reduce((s, r) => s + r.amount, 0)).toLocaleString(), "\uC6D0"), " \xB7 \uAE00\ub85c\ubc8c \ud544\ud130 + \uD504\uB85C\uC81D\uD2B8 \uC801\uC6A9")), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-2"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => downloadCsvManagerial(selectedRows),
+    className: "px-3 py-1.5 rounded-lg text-xs font-medium",
+    style: {
+      background: `${COLOR.gold}15`,
+      border: `1px solid ${COLOR.gold}40`,
+      color: COLOR.gold,
+      cursor: "pointer"
+    }
+  }, "\u2B07 Excel \uB2E4\uC6B4\uB85C\uB4DC"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setSelectedOrg(null),
+    className: "px-3 py-1.5 rounded-lg text-xs",
+    style: {
+      background: COLOR.surface,
+      border: `1px solid ${COLOR.border}`,
+      color: COLOR.textDim,
+      cursor: "pointer"
+    }
+  }, "\u2715 \uC120\uD0DD \uD574\uC81C"))), /*#__PURE__*/React.createElement(PnlDetailTable, {
+    rows: selectedRows,
+    showOrg: true
   })));
 }
 
@@ -12542,14 +12624,15 @@ function PnlMatrixTable({
   }, "\uAC74\uC218"))), /*#__PURE__*/React.createElement("tbody", null, rows.map((r, k) => {
     const isSelected = r.name === selected;
     const isUnassigned = r.name === "(미지정)";
+    const clickable = !!onSelect;
     const rowBg = isSelected ? `${COLOR.gold}15` : "transparent";
     return /*#__PURE__*/React.createElement("tr", {
       key: k,
-      onClick: () => onSelect(r.name === selected ? null : r.name),
+      onClick: clickable ? () => onSelect(r.name === selected ? null : r.name) : undefined,
       style: {
         borderBottom: `1px dashed ${COLOR.border}`,
         background: rowBg,
-        cursor: "pointer",
+        cursor: clickable ? "pointer" : "default",
         transition: "background 0.15s"
       }
     }, /*#__PURE__*/React.createElement("td", {
